@@ -1,0 +1,469 @@
+// Package gateway terminates client WebSockets. It verifies tokens, enforces
+// per-connection limits, and multiplexes frames over one gRPC tunnel per game
+// node. It keeps no game state, so losing a gateway only costs a reconnect.
+package gateway
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math/rand/v2"
+	"net/http"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/coder/websocket"
+	"golang.org/x/time/rate"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
+
+	gamev1 "github.com/yourname/gameserver/gen/game/v1"
+	internalv1 "github.com/yourname/gameserver/gen/internal/v1"
+	"github.com/yourname/gameserver/pkg/auth"
+	"github.com/yourname/gameserver/pkg/discovery"
+	"github.com/yourname/gameserver/pkg/session"
+)
+
+// Routes maps a client message ID to a service name, by range. This is how one
+// SLG connection reaches world, alliance and chat backends.
+type Routes func(msgID uint32) (service string, ok bool)
+
+// DefaultRoutes reflects the MsgId ranges in envelope.proto.
+func DefaultRoutes(msgID uint32) (string, bool) {
+	switch {
+	case msgID >= 1000 && msgID < 2000:
+		return "room", true
+	case msgID >= 3000 && msgID < 4000:
+		return "world", true
+	}
+	return "", false
+}
+
+// Config tunes a Gateway.
+type Config struct {
+	Signer     *auth.Signer
+	Epochs     session.Epochs
+	Resolver   discovery.Resolver
+	Routes     Routes
+	MaxFrame   int64         // Default 64 KiB.
+	MaxBinding int           // Default 8.
+	AuthWait   time.Duration // Default 5s.
+	IdleWait   time.Duration // Default 45s; clients heartbeat every 15s.
+	SendQueue  int           // Default 256.
+	RateLimit  rate.Limit    // Messages per second. Default 30.
+	RateBurst  int           // Default 60.
+	Dial       func(addr string) (*grpc.ClientConn, error)
+}
+
+// Gateway serves WebSocket clients.
+type Gateway struct {
+	cfg      Config
+	draining atomic.Bool
+	online   atomic.Int64
+
+	mu      sync.Mutex
+	tunnels map[string]*tunnel
+	conns   map[*conn]struct{}
+}
+
+// New creates a Gateway.
+func New(cfg Config) *Gateway {
+	if cfg.Routes == nil {
+		cfg.Routes = DefaultRoutes
+	}
+	if cfg.MaxFrame <= 0 {
+		cfg.MaxFrame = 64 << 10
+	}
+	if cfg.MaxBinding <= 0 {
+		cfg.MaxBinding = 8
+	}
+	if cfg.AuthWait <= 0 {
+		cfg.AuthWait = 5 * time.Second
+	}
+	if cfg.IdleWait <= 0 {
+		cfg.IdleWait = 45 * time.Second
+	}
+	if cfg.SendQueue <= 0 {
+		cfg.SendQueue = 256
+	}
+	if cfg.RateLimit <= 0 {
+		cfg.RateLimit, cfg.RateBurst = 30, 60
+	}
+	if cfg.Dial == nil {
+		cfg.Dial = func(addr string) (*grpc.ClientConn, error) {
+			return grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		}
+	}
+	return &Gateway{cfg: cfg, tunnels: map[string]*tunnel{}, conns: map[*conn]struct{}{}}
+}
+
+// Online returns the current connection count.
+func (g *Gateway) Online() int64 { return g.online.Load() }
+
+// conn is one client socket.
+type conn struct {
+	uid      int64
+	epoch    uint64
+	ws       *websocket.Conn
+	out      chan []byte
+	closed   chan struct{}
+	once     sync.Once
+	reason   atomic.Value // string
+	bindings []bound
+	limiter  *rate.Limiter
+}
+
+type bound struct {
+	service string
+	key     string
+	tun     *tunnel
+}
+
+func (c *conn) shut(reason string) {
+	c.once.Do(func() {
+		c.reason.Store(reason)
+		close(c.closed)
+	})
+}
+
+func (c *conn) push(frame []byte) {
+	select {
+	case c.out <- frame:
+	case <-c.closed:
+	default:
+		// Slow client. Closing is safe: the game node retains its frames.
+		c.shut("slow client")
+	}
+}
+
+// ServeHTTP upgrades and runs one connection.
+func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if g.draining.Load() {
+		http.Error(w, "draining", http.StatusServiceUnavailable)
+		return
+	}
+	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+		// Token auth, not cookies, so a cross-origin page gains nothing.
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		return
+	}
+	ws.SetReadLimit(g.cfg.MaxFrame)
+	defer ws.CloseNow() //nolint:errcheck // Best-effort cleanup.
+
+	ctx := r.Context()
+	c, err := g.handshake(ctx, ws)
+	if err != nil {
+		slog.Debug("handshake rejected", "err", err)
+		_ = ws.Close(websocket.StatusPolicyViolation, "unauthorized")
+		return
+	}
+	g.track(c, true)
+	defer g.track(c, false)
+	defer g.detach(c)
+
+	go g.writeLoop(ctx, c)
+	g.readLoop(ctx, c)
+	c.shut("client gone")
+	if reason, _ := c.reason.Load().(string); reason != "" {
+		_ = ws.Close(websocket.StatusNormalClosure, reason)
+	}
+}
+
+func (g *Gateway) track(c *conn, add bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if add {
+		g.conns[c] = struct{}{}
+		g.online.Add(1)
+		return
+	}
+	delete(g.conns, c)
+	g.online.Add(-1)
+}
+
+func (g *Gateway) handshake(ctx context.Context, ws *websocket.Conn) (*conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, g.cfg.AuthWait)
+	defer cancel()
+	_, data, err := ws.Read(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read connect: %w", err)
+	}
+	env := &gamev1.Envelope{}
+	if err := proto.Unmarshal(data, env); err != nil || env.GetMsgId() != uint32(gamev1.MsgId_MSG_ID_CONNECT_REQ) {
+		return nil, errors.New("first frame must be ConnectReq")
+	}
+	req := &gamev1.ConnectReq{}
+	if err := proto.Unmarshal(env.GetPayload(), req); err != nil {
+		return nil, fmt.Errorf("bad ConnectReq: %w", err)
+	}
+	if n := len(req.GetBindings()); n == 0 || n > g.cfg.MaxBinding {
+		return nil, fmt.Errorf("binding count %d", n)
+	}
+	claims, err := g.cfg.Signer.Verify(req.GetToken())
+	if err != nil {
+		return nil, err
+	}
+	// Reading Redis here, once per connect and never per message, closes the
+	// window where a superseded token could still attach.
+	cur, err := g.cfg.Epochs.Current(ctx, claims.UID)
+	if err != nil {
+		return nil, err
+	}
+	if claims.Epoch != cur {
+		return nil, fmt.Errorf("stale epoch %d, current %d", claims.Epoch, cur)
+	}
+
+	c := &conn{uid: claims.UID, epoch: claims.Epoch, ws: ws,
+		out: make(chan []byte, g.cfg.SendQueue), closed: make(chan struct{}),
+		limiter: rate.NewLimiter(g.cfg.RateLimit, g.cfg.RateBurst)}
+	for i, b := range req.GetBindings() {
+		addr, err := g.cfg.Resolver.Resolve(b.GetService(), b.GetKey())
+		if err != nil {
+			return nil, err
+		}
+		t, err := g.tunnel(addr)
+		if err != nil {
+			return nil, err
+		}
+		t.add(c)
+		c.bindings = append(c.bindings, bound{service: b.GetService(), key: b.GetKey(), tun: t})
+		err = t.sendUp(&internalv1.Upstream{Uid: c.uid, Key: b.GetKey(),
+			Body: &internalv1.Upstream_Attach{Attach: &internalv1.Attach{
+				SessionId: claims.Session, Epoch: c.epoch, LastSeq: b.GetLastSeq(),
+				Resume: b.GetLastSeq() > 0, Key: b.GetKey(), Channel: uint32(i)}}})
+		if err != nil {
+			g.detach(c)
+			return nil, err
+		}
+	}
+	return c, nil
+}
+
+func (g *Gateway) readLoop(ctx context.Context, c *conn) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-c.closed:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	for {
+		rctx, rcancel := context.WithTimeout(ctx, g.cfg.IdleWait)
+		_, data, err := c.ws.Read(rctx)
+		rcancel()
+		if err != nil {
+			return
+		}
+		if !c.limiter.Allow() {
+			c.shut("rate limited")
+			return
+		}
+		env := &gamev1.Envelope{}
+		if err := proto.Unmarshal(data, env); err != nil {
+			c.shut("malformed frame")
+			return
+		}
+		if env.GetMsgId() == uint32(gamev1.MsgId_MSG_ID_HEARTBEAT) {
+			if b, err := proto.Marshal(&gamev1.Envelope{MsgId: env.GetMsgId()}); err == nil {
+				c.push(b)
+			}
+			continue
+		}
+		service, ok := g.cfg.Routes(env.GetMsgId())
+		if !ok {
+			c.shut("unroutable message")
+			return
+		}
+		b := c.find(service)
+		if b == nil {
+			c.shut("service not bound")
+			return
+		}
+		if err := b.tun.sendUp(&internalv1.Upstream{Uid: c.uid, Key: b.key,
+			Body: &internalv1.Upstream_Frame{Frame: data}}); err != nil {
+			c.shut("backend lost")
+			return
+		}
+	}
+}
+
+func (c *conn) find(service string) *bound {
+	for i := range c.bindings {
+		if c.bindings[i].service == service {
+			return &c.bindings[i]
+		}
+	}
+	return nil
+}
+
+func (g *Gateway) writeLoop(ctx context.Context, c *conn) {
+	for {
+		select {
+		case <-c.closed:
+			return
+		case <-ctx.Done():
+			return
+		case frame := <-c.out:
+			wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := c.ws.Write(wctx, websocket.MessageBinary, frame)
+			cancel()
+			if err != nil {
+				c.shut("write failed")
+				return
+			}
+		}
+	}
+}
+
+func (g *Gateway) detach(c *conn) {
+	for _, b := range c.bindings {
+		b.tun.remove(c)
+		_ = b.tun.sendUp(&internalv1.Upstream{Uid: c.uid, Key: b.key,
+			Body: &internalv1.Upstream_Detach{Detach: &internalv1.Detach{Epoch: c.epoch}}})
+	}
+}
+
+// Drain stops new connections and closes current ones spread across window, so
+// a rolling deploy does not trigger a synchronized reconnect storm.
+func (g *Gateway) Drain(window time.Duration) {
+	g.draining.Store(true)
+	g.mu.Lock()
+	conns := make([]*conn, 0, len(g.conns))
+	for c := range g.conns {
+		conns = append(conns, c)
+	}
+	g.mu.Unlock()
+	for _, c := range conns {
+		c := c
+		time.AfterFunc(time.Duration(rand.Int64N(int64(window)+1)), func() {
+			if b, err := kickFrame("server restarting"); err == nil {
+				c.push(b)
+			}
+			time.AfterFunc(200*time.Millisecond, func() { c.shut("draining") })
+		})
+	}
+}
+
+func kickFrame(reason string) ([]byte, error) {
+	p, err := proto.Marshal(&gamev1.Kick{Reason: reason})
+	if err != nil {
+		return nil, err
+	}
+	return proto.Marshal(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_KICK), Payload: p})
+}
+
+// tunnel is one gRPC stream to a game node.
+type tunnel struct {
+	addr   string
+	stream grpc.BidiStreamingClient[internalv1.Upstream, internalv1.Downstream]
+	cancel context.CancelFunc
+
+	sendMu sync.Mutex // A gRPC stream allows one concurrent sender.
+
+	mu    sync.RWMutex
+	conns map[int64]map[*conn]struct{}
+	dead  bool
+}
+
+func (g *Gateway) tunnel(addr string) (*tunnel, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if t, ok := g.tunnels[addr]; ok && !t.isDead() {
+		return t, nil
+	}
+	cc, err := g.cfg.Dial(addr)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := internalv1.NewGameBackendClient(cc).Tunnel(ctx)
+	if err != nil {
+		cancel()
+		_ = cc.Close()
+		return nil, err
+	}
+	t := &tunnel{addr: addr, stream: stream, cancel: cancel, conns: map[int64]map[*conn]struct{}{}}
+	g.tunnels[addr] = t
+	go func() {
+		t.recvLoop()
+		_ = cc.Close()
+	}()
+	return t, nil
+}
+
+func (t *tunnel) isDead() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.dead
+}
+
+func (t *tunnel) add(c *conn) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.conns[c.uid] == nil {
+		t.conns[c.uid] = map[*conn]struct{}{}
+	}
+	t.conns[c.uid][c] = struct{}{}
+}
+
+func (t *tunnel) remove(c *conn) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.conns[c.uid], c)
+	if len(t.conns[c.uid]) == 0 {
+		delete(t.conns, c.uid)
+	}
+}
+
+func (t *tunnel) sendUp(m *internalv1.Upstream) error {
+	t.sendMu.Lock()
+	defer t.sendMu.Unlock()
+	return t.stream.Send(m)
+}
+
+func (t *tunnel) recvLoop() {
+	defer t.cancel()
+	for {
+		m, err := t.stream.Recv()
+		if err != nil {
+			t.mu.Lock()
+			t.dead = true
+			all := t.conns
+			t.conns = map[int64]map[*conn]struct{}{}
+			t.mu.Unlock()
+			// The game node is gone: clients reconnect and re-resolve.
+			for _, set := range all {
+				for c := range set {
+					c.shut("backend lost")
+				}
+			}
+			return
+		}
+		t.mu.RLock()
+		var targets []*conn
+		for c := range t.conns[m.GetUid()] {
+			if m.GetEpoch() == 0 || c.epoch == m.GetEpoch() {
+				targets = append(targets, c)
+			}
+		}
+		t.mu.RUnlock()
+		for _, c := range targets {
+			switch b := m.GetBody().(type) {
+			case *internalv1.Downstream_Frame:
+				c.push(b.Frame)
+			case *internalv1.Downstream_CloseReason:
+				if f, err := kickFrame(b.CloseReason); err == nil {
+					c.push(f)
+				}
+				c.shut(b.CloseReason)
+			}
+		}
+	}
+}

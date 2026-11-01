@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package game.v1;
+
+option go_package = "github.com/yourname/gameserver/gen/game/v1;gamev1";
+
+// Envelope wraps every client<->server message on WebSocket and HTTP alike.
+message Envelope {
+  uint32 msg_id = 1;      // Business message type (see MsgId).
+  uint64 seq = 2;         // Server->client sequence; 0 means "not replayable".
+  uint64 ack = 3;         // Client->server: highest server seq received.
+  uint64 client_seq = 4;  // Client->server: strictly increasing per session.
+  string request_id = 5;  // Idempotency key for anything that moves value.
+  int32 code = 6;         // 0 = OK, see ErrorCode.
+  bytes payload = 7;      // Serialized business message.
+  uint32 channel = 8;     // Which ConnectReq binding this frame belongs to.
+}
+
+enum MsgId {
+  MSG_ID_UNSPECIFIED = 0;
+  MSG_ID_HEARTBEAT = 1;
+  MSG_ID_CONNECT_REQ = 2;
+  MSG_ID_RESUME_RSP = 3;
+  MSG_ID_KICK = 4;
+
+  MSG_ID_ROOM_ACTION_REQ = 1001;
+  MSG_ID_ROOM_ACTION_RSP = 1002;
+  MSG_ID_ROOM_SNAPSHOT = 1003;
+
+  MSG_ID_SPIN_REQ = 2001;
+  MSG_ID_SPIN_RSP = 2002;
+
+  MSG_ID_MARCH_REQ = 3001;
+  MSG_ID_MARCH_RSP = 3002;
+  MSG_ID_MARCH_ARRIVED = 3003;
+}
+
+enum ErrorCode {
+  ERROR_CODE_OK = 0;
+  ERROR_CODE_BAD_REQUEST = 1;
+  ERROR_CODE_UNAUTHORIZED = 2;
+  ERROR_CODE_RATE_LIMITED = 3;
+  ERROR_CODE_INSUFFICIENT_FUNDS = 4;
+  ERROR_CODE_DUPLICATE_IN_PROGRESS = 5;
+  ERROR_CODE_INTERNAL = 6;
+  ERROR_CODE_BUSY = 7;
+}
+
+// Binding attaches the connection to one backend. An SLG client binds world,
+// alliance, chat and so on over a single socket. Its index is the channel.
+message Binding {
+  string service = 1;
+  string key = 2;       // Room or kingdom id; picks the owning node.
+  uint64 last_seq = 3;  // Highest seq seen on this channel; 0 when fresh.
+}
+
+// ConnectReq must be the first frame. A browser cannot set WebSocket headers,
+// and a token in the URL would end up in access logs.
+message ConnectReq {
+  string token = 1;
+  repeated Binding bindings = 2;
+}
+
+message LoginReq {
+  string provider = 1;    // "local" or a registered third-party name.
+  string username = 2;    // Local provider only.
+  string credential = 3;  // Password, or the third party's token.
+}
+
+message LoginRsp {
+  string token = 1;
+  int64 uid = 2;
+  int64 expires_at_ms = 3;
+}
+
+message ResumeRsp {
+  bool replayed = 1;   // true: missed frames follow; false: a snapshot follows.
+  uint64 next_seq = 2;
+}
+
+message Kick {
+  string reason = 1;
+}
+
+message RoomActionReq {
+  int32 delta = 1;
+}
+
+message RoomActionRsp {
+  int64 value = 1;
+}
+
+message RoomSnapshot {
+  string room_id = 1;
+  int64 value = 2;
+  repeated int64 members = 3;
+}
+
+message SpinReq {
+  int64 bet = 1;
+}
+
+message SpinRsp {
+  repeated int32 reels = 1;
+  int64 win = 2;
+  int64 balance = 3;
+  uint64 round_id = 4;
+}
+
+message MarchReq {
+  int32 to_x = 1;
+  int32 to_y = 2;
+  int64 troops = 3;
+}
+
+message MarchRsp {
+  uint64 march_id = 1;
+  int64 arrive_at_ms = 2;
+}
+
+message MarchArrived {
+  uint64 march_id = 1;
+  int32 x = 2;
+  int32 y = 3;
+  int64 troops = 4;
+}

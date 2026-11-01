@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package internal.v1;
+
+option go_package = "github.com/yourname/gameserver/gen/internal/v1;internalv1";
+
+// GameBackend is implemented by stateful game nodes (room, SLG world).
+// One Tunnel per gateway<->game pair multiplexes all players of that pair.
+service GameBackend {
+  rpc Tunnel(stream Upstream) returns (stream Downstream);
+}
+
+message Upstream {
+  int64 uid = 1;
+  string key = 5;      // Scene key, on every frame: a uid may be in many scenes.
+  oneof body {
+    Attach attach = 2;
+    bytes frame = 3;   // Serialized game.v1.Envelope from the client.
+    Detach detach = 4;
+  }
+}
+
+message Attach {
+  string session_id = 1;
+  uint64 epoch = 2;     // Bumped per login; an older epoch must lose.
+  uint64 last_seq = 3;  // 0 for a fresh connection.
+  bool resume = 4;
+  string key = 5;       // Scene key: room or kingdom id.
+  uint32 channel = 6;   // Stamped onto every downstream Envelope.
+}
+
+message Detach {
+  uint64 epoch = 1;
+}
+
+message Downstream {
+  int64 uid = 1;
+  uint64 epoch = 2;
+  oneof body {
+    bytes frame = 3;       // Serialized game.v1.Envelope for the client.
+    string close_reason = 4;
+  }
+}

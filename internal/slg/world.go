@@ -48,6 +48,8 @@ type Store interface {
 	// Arrive moves a marching march to arrived. It returns false if it was
 	// already arrived, which is what makes a re-fired timer harmless.
 	Arrive(ctx context.Context, id uint64) (March, bool, error)
+	// Troops sums a player's arrived troops in a kingdom.
+	Troops(ctx context.Context, kingdom string, uid int64) (int64, error)
 }
 
 // MemoryStore is an in-process Store.
@@ -85,6 +87,19 @@ func (s *MemoryStore) Arrive(_ context.Context, id uint64) (March, bool, error) 
 	return m, true, nil
 }
 
+// Troops implements Store.
+func (s *MemoryStore) Troops(_ context.Context, kingdom string, uid int64) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var total int64
+	for id, m := range s.marches {
+		if s.arrived[id] && m.Kingdom == kingdom && m.UID == uid {
+			total += m.Troops
+		}
+	}
+	return total, nil
+}
+
 // Config wires the world service.
 type Config struct {
 	Store     Store
@@ -118,7 +133,7 @@ func New(cfg Config) *World {
 
 // Factory is a gamehost.Factory.
 func (w *World) Factory(key string, ctx *gamehost.SceneContext) gamehost.Scene {
-	k := &Kingdom{key: key, world: w, ctx: ctx, armies: map[int64]int64{}}
+	k := &Kingdom{key: key, world: w, ctx: ctx}
 	w.mu.Lock()
 	w.scenes[key] = k
 	w.mu.Unlock()
@@ -152,16 +167,15 @@ func (w *World) onArrive(ctx context.Context, j timer.Job) error {
 	return nil
 }
 
-// Kingdom is one world scene. Fields are actor-only.
+// Kingdom is one world scene. It deliberately caches no troop counts: arrivals
+// commit with no scene loaded, so the store is the only complete record.
 type Kingdom struct {
-	key    string
-	world  *World
-	ctx    *gamehost.SceneContext
-	armies map[int64]int64 // Troops per uid at their destination.
+	key   string
+	world *World
+	ctx   *gamehost.SceneContext
 }
 
 func (k *Kingdom) arrived(m March) {
-	k.armies[m.UID] += m.Troops
 	if p := k.ctx.Player(m.UID); p != nil {
 		p.Push(gamev1.MsgId_MSG_ID_MARCH_ARRIVED, &gamev1.MarchArrived{
 			MarchId: m.ID, X: m.ToX, Y: m.ToY, Troops: m.Troops})
@@ -182,8 +196,14 @@ func (*Kingdom) OnReconnect(*gamehost.Player) {}
 func (*Kingdom) OnExpire(*gamehost.Player) {}
 
 // Snapshot implements gamehost.Scene.
-func (k *Kingdom) Snapshot(p *gamehost.Player) (gamev1.MsgId, proto.Message) {
-	return gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT, &gamev1.RoomSnapshot{RoomId: k.key, Value: k.armies[p.UID]}
+func (k *Kingdom) Snapshot(p *gamehost.Player) (gamev1.MsgId, proto.Message, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	troops, err := k.world.cfg.Store.Troops(ctx, k.key, p.UID)
+	if err != nil {
+		return 0, nil, fmt.Errorf("slg: load troops: %w", err)
+	}
+	return gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT, &gamev1.RoomSnapshot{RoomId: k.key, Value: troops}, nil
 }
 
 // OnMessage implements gamehost.Scene.

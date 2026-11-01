@@ -34,12 +34,12 @@ func (*Room) OnReconnect(*gamehost.Player) {}
 func (*Room) OnExpire(*gamehost.Player) {}
 
 // Snapshot implements gamehost.Scene.
-func (r *Room) Snapshot(*gamehost.Player) (gamev1.MsgId, proto.Message) {
+func (r *Room) Snapshot(*gamehost.Player) (gamev1.MsgId, proto.Message, error) {
 	s := &gamev1.RoomSnapshot{RoomId: r.key, Value: r.value}
 	for uid := range r.ctx.Players() {
 		s.Members = append(s.Members, uid)
 	}
-	return gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT, s
+	return gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT, s, nil
 }
 
 // OnMessage implements gamehost.Scene.

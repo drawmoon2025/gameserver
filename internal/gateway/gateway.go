@@ -21,7 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	internalv1 "github.com/yourname/gameserver/gen/internal/v1"
+	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
 	"github.com/yourname/gameserver/pkg/auth"
 	"github.com/yourname/gameserver/pkg/discovery"
 	"github.com/yourname/gameserver/pkg/session"
@@ -221,7 +221,22 @@ func (g *Gateway) handshake(ctx context.Context, ws *websocket.Conn) (*conn, err
 	c := &conn{uid: claims.UID, epoch: claims.Epoch, ws: ws,
 		out: make(chan []byte, g.cfg.SendQueue), closed: make(chan struct{}),
 		limiter: rate.NewLimiter(g.cfg.RateLimit, g.cfg.RateBurst)}
+	attached := false
+	defer func() {
+		// A partial handshake must not leave earlier bindings looking online.
+		if !attached {
+			g.detach(c)
+		}
+	}()
+	seen := make(map[string]bool, len(req.GetBindings()))
 	for i, b := range req.GetBindings() {
+		// A host seats a uid once per scene, so a duplicate would silently
+		// overwrite the first binding's channel.
+		id := b.GetService() + "\x00" + b.GetKey()
+		if seen[id] {
+			return nil, fmt.Errorf("duplicate binding %s/%s", b.GetService(), b.GetKey())
+		}
+		seen[id] = true
 		addr, err := g.cfg.Resolver.Resolve(b.GetService(), b.GetKey())
 		if err != nil {
 			return nil, err
@@ -232,15 +247,15 @@ func (g *Gateway) handshake(ctx context.Context, ws *websocket.Conn) (*conn, err
 		}
 		t.add(c)
 		c.bindings = append(c.bindings, bound{service: b.GetService(), key: b.GetKey(), tun: t})
-		err = t.sendUp(&internalv1.Upstream{Uid: c.uid, Key: b.GetKey(),
-			Body: &internalv1.Upstream_Attach{Attach: &internalv1.Attach{
+		err = t.sendUp(&backendv1.Upstream{Uid: c.uid, Key: b.GetKey(),
+			Body: &backendv1.Upstream_Attach{Attach: &backendv1.Attach{
 				SessionId: claims.Session, Epoch: c.epoch, LastSeq: b.GetLastSeq(),
 				Resume: b.GetLastSeq() > 0, Key: b.GetKey(), Channel: uint32(i)}}})
 		if err != nil {
-			g.detach(c)
 			return nil, err
 		}
 	}
+	attached = true
 	return c, nil
 }
 
@@ -281,26 +296,20 @@ func (g *Gateway) readLoop(ctx context.Context, c *conn) {
 			c.shut("unroutable message")
 			return
 		}
-		b := c.find(service)
-		if b == nil {
-			c.shut("service not bound")
+		// The channel picks the binding, since two rooms share a service. The
+		// service check stops a frame reaching a backend that cannot parse it.
+		ch := env.GetChannel()
+		if uint64(ch) >= uint64(len(c.bindings)) || c.bindings[ch].service != service {
+			c.shut("service not bound on channel")
 			return
 		}
-		if err := b.tun.sendUp(&internalv1.Upstream{Uid: c.uid, Key: b.key,
-			Body: &internalv1.Upstream_Frame{Frame: data}}); err != nil {
+		b := &c.bindings[ch]
+		if err := b.tun.sendUp(&backendv1.Upstream{Uid: c.uid, Key: b.key,
+			Body: &backendv1.Upstream_Frame{Frame: data}}); err != nil {
 			c.shut("backend lost")
 			return
 		}
 	}
-}
-
-func (c *conn) find(service string) *bound {
-	for i := range c.bindings {
-		if c.bindings[i].service == service {
-			return &c.bindings[i]
-		}
-	}
-	return nil
 }
 
 func (g *Gateway) writeLoop(ctx context.Context, c *conn) {
@@ -325,8 +334,8 @@ func (g *Gateway) writeLoop(ctx context.Context, c *conn) {
 func (g *Gateway) detach(c *conn) {
 	for _, b := range c.bindings {
 		b.tun.remove(c)
-		_ = b.tun.sendUp(&internalv1.Upstream{Uid: c.uid, Key: b.key,
-			Body: &internalv1.Upstream_Detach{Detach: &internalv1.Detach{Epoch: c.epoch}}})
+		_ = b.tun.sendUp(&backendv1.Upstream{Uid: c.uid, Key: b.key,
+			Body: &backendv1.Upstream_Detach{Detach: &backendv1.Detach{Epoch: c.epoch}}})
 	}
 }
 
@@ -362,7 +371,7 @@ func kickFrame(reason string) ([]byte, error) {
 // tunnel is one gRPC stream to a game node.
 type tunnel struct {
 	addr   string
-	stream grpc.BidiStreamingClient[internalv1.Upstream, internalv1.Downstream]
+	stream grpc.BidiStreamingClient[backendv1.Upstream, backendv1.Downstream]
 	cancel context.CancelFunc
 
 	sendMu sync.Mutex // A gRPC stream allows one concurrent sender.
@@ -383,7 +392,7 @@ func (g *Gateway) tunnel(addr string) (*tunnel, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := internalv1.NewGameBackendClient(cc).Tunnel(ctx)
+	stream, err := backendv1.NewGameBackendClient(cc).Tunnel(ctx)
 	if err != nil {
 		cancel()
 		_ = cc.Close()
@@ -422,7 +431,7 @@ func (t *tunnel) remove(c *conn) {
 	}
 }
 
-func (t *tunnel) sendUp(m *internalv1.Upstream) error {
+func (t *tunnel) sendUp(m *backendv1.Upstream) error {
 	t.sendMu.Lock()
 	defer t.sendMu.Unlock()
 	return t.stream.Send(m)
@@ -456,9 +465,9 @@ func (t *tunnel) recvLoop() {
 		t.mu.RUnlock()
 		for _, c := range targets {
 			switch b := m.GetBody().(type) {
-			case *internalv1.Downstream_Frame:
+			case *backendv1.Downstream_Frame:
 				c.push(b.Frame)
-			case *internalv1.Downstream_CloseReason:
+			case *backendv1.Downstream_CloseReason:
 				if f, err := kickFrame(b.CloseReason); err == nil {
 					c.push(f)
 				}

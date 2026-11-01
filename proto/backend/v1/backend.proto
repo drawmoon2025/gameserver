@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package internal.v1;
+package backend.v1;
 
-option go_package = "github.com/yourname/gameserver/gen/internal/v1;internalv1";
+option go_package = "github.com/yourname/gameserver/gen/backend/v1;backendv1";
 
 // GameBackend is implemented by stateful game nodes (room, SLG world).
 // One Tunnel per gateway<->game pair multiplexes all players of that pair.

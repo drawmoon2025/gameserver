@@ -25,7 +25,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
-	internalv1 "github.com/yourname/gameserver/gen/internal/v1"
+	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
 	"github.com/yourname/gameserver/internal/account"
 	"github.com/yourname/gameserver/internal/gamehost"
 	"github.com/yourname/gameserver/internal/gateway"
@@ -144,7 +144,7 @@ func serveGame(ctx context.Context, name, addr string, f gamehost.Factory) (*gam
 	}
 	host := gamehost.New(gamehost.Config{Factory: f})
 	srv := grpc.NewServer()
-	internalv1.RegisterGameBackendServer(srv, host)
+	backendv1.RegisterGameBackendServer(srv, host)
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()
@@ -184,7 +184,7 @@ func run() error {
 	}
 	if on("slots") {
 		mux := http.NewServeMux()
-		(&slots.Service{Wallet: d.wallet, Signer: d.signer, IDs: d.ids}).Routes(mux)
+		(&slots.Service{Wallet: d.wallet, Signer: d.signer, Epochs: d.epochs, IDs: d.ids}).Routes(mux)
 		serveHTTP(ctx, "slots", env("SLOTS_ADDR", ":8082"), mux)
 		for _, s := range d.outboxes {
 			r := &events.Relay{Store: s, Publisher: publisher()}

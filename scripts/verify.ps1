@@ -19,7 +19,7 @@ Step 'generate protobuf' {
     New-Item -ItemType Directory -Force gen | Out-Null
     protoc --proto_path=proto --go_out=gen --go_opt=paths=source_relative `
         --go-grpc_out=gen --go-grpc_opt=paths=source_relative `
-        proto/game/v1/envelope.proto proto/internal/v1/backend.proto
+        proto/game/v1/envelope.proto proto/backend/v1/backend.proto
 }
 Step 'go mod tidy' { go mod tidy }
 Step 'go build' { go build ./... }

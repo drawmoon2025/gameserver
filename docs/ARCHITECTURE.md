@@ -22,7 +22,7 @@ Optional: event_outbox -> Relay -> Kafka (KAFKA_ENABLED)
 2. **Anything that moves value has an idempotency key.** Slots use `request_id`; WS requests use `client_seq`; timers use the job ID.
 3. **Kafka is side-channel.** It is off by default and core flows do not read from it.
 4. **Actors do not share memory.** Cross-actor work uses Tell plus a reply Tell, never nested Ask.
-5. **Newer epoch wins.** It is checked at connect and again on attach.
+5. **Newer epoch wins.** It is checked at connect, on attach, and on every value-moving HTTP request.
 
 ## Reconnect
 
@@ -54,9 +54,10 @@ actions take hours or days, and one player touches many services at once.
 | chat | Kingdom and alliance channels | channel | Planned |
 | rank | Leaderboards (Redis sorted sets) | board | Planned |
 
-One socket reaches all of them: `ConnectReq` lists bindings, each binding is a channel
-with its own `seq`, and the gateway routes frames by `msg_id` range. Add a service by
-giving it a range in `gateway.DefaultRoutes`.
+One socket reaches all of them: `ConnectReq` lists bindings, and each binding is a channel
+with its own `seq`. Clients set `channel` on every frame. The gateway sends the frame to
+that binding after checking that its `msg_id` range belongs to the binding's service. Add a
+service by giving it a range in `gateway.DefaultRoutes`.
 
 ### Timers
 

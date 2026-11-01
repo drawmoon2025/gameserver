@@ -12,7 +12,7 @@ echo "==> generate protobuf"
 mkdir -p gen
 protoc --proto_path=proto --go_out=gen --go_opt=paths=source_relative \
   --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
-  proto/game/v1/envelope.proto proto/internal/v1/backend.proto
+  proto/game/v1/envelope.proto proto/backend/v1/backend.proto
 
 echo "==> go mod tidy"; go mod tidy
 echo "==> go build"; go build ./...

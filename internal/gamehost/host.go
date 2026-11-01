@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	internalv1 "github.com/yourname/gameserver/gen/internal/v1"
+	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
 	"github.com/yourname/gameserver/pkg/actor"
 	"github.com/yourname/gameserver/pkg/resume"
 )
@@ -41,8 +41,10 @@ type Scene interface {
 	OnExpire(p *Player)
 	// OnMessage handles one client request.
 	OnMessage(p *Player, env *gamev1.Envelope) Reply
-	// Snapshot builds full state, sent when replay cannot cover a gap.
-	Snapshot(p *Player) (gamev1.MsgId, proto.Message)
+	// Snapshot builds full state, sent when replay cannot cover a gap. On
+	// error the connection closes and the client retries: a client must never
+	// be given a partial snapshot as if it were the truth.
+	Snapshot(p *Player) (gamev1.MsgId, proto.Message, error)
 }
 
 // Factory creates a scene. The context gives it its actor, for timers.
@@ -70,7 +72,7 @@ type Config struct {
 
 // Host implements the GameBackend gRPC service.
 type Host struct {
-	internalv1.UnimplementedGameBackendServer
+	backendv1.UnimplementedGameBackendServer
 
 	cfg Config
 
@@ -161,16 +163,16 @@ func (p *Player) stamp(env *gamev1.Envelope) resume.Stamp {
 
 func (p *Player) send(frame []byte) {
 	if p.tun != nil {
-		p.tun.send(&internalv1.Downstream{Uid: p.UID, Epoch: p.epoch,
-			Body: &internalv1.Downstream_Frame{Frame: frame}})
+		p.tun.send(&backendv1.Downstream{Uid: p.UID, Epoch: p.epoch,
+			Body: &backendv1.Downstream_Frame{Frame: frame}})
 	}
 }
 
 // Tunnel implements GameBackend: one stream per gateway.
-func (h *Host) Tunnel(stream grpc.BidiStreamingServer[internalv1.Upstream, internalv1.Downstream]) error {
+func (h *Host) Tunnel(stream grpc.BidiStreamingServer[backendv1.Upstream, backendv1.Downstream]) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
-	t := &tunnel{out: make(chan *internalv1.Downstream, 8192), cancel: cancel}
+	t := &tunnel{out: make(chan *backendv1.Downstream, 8192), cancel: cancel}
 	defer h.tunnelGone(t)
 
 	done := make(chan error, 1)
@@ -204,14 +206,14 @@ func (h *Host) Tunnel(stream grpc.BidiStreamingServer[internalv1.Upstream, inter
 
 // tunnel is the per-gateway send side. Sends never block an actor.
 type tunnel struct {
-	out    chan *internalv1.Downstream
+	out    chan *backendv1.Downstream
 	cancel context.CancelFunc
 
 	mu     sync.Mutex
 	scenes map[*sceneRun]map[int64]struct{}
 }
 
-func (t *tunnel) send(m *internalv1.Downstream) {
+func (t *tunnel) send(m *backendv1.Downstream) {
 	select {
 	case t.out <- m:
 	default:
@@ -255,17 +257,17 @@ func (h *Host) tunnelGone(t *tunnel) {
 	}
 }
 
-func (h *Host) dispatch(t *tunnel, m *internalv1.Upstream) {
+func (h *Host) dispatch(t *tunnel, m *backendv1.Upstream) {
 	s := h.sceneFor(m.GetKey())
 	uid := m.GetUid()
 	var err error
 	switch b := m.GetBody().(type) {
-	case *internalv1.Upstream_Attach:
+	case *backendv1.Upstream_Attach:
 		t.track(s, uid)
 		err = s.actor.Tell(func() { s.attach(t, uid, b.Attach) })
-	case *internalv1.Upstream_Frame:
+	case *backendv1.Upstream_Frame:
 		err = s.actor.Tell(func() { s.frame(t, uid, b.Frame) })
-	case *internalv1.Upstream_Detach:
+	case *backendv1.Upstream_Detach:
 		err = s.actor.Tell(func() {
 			if p := s.players[uid]; p != nil && p.epoch == b.Detach.GetEpoch() && p.tun == t {
 				s.disconnect(p)
@@ -274,15 +276,15 @@ func (h *Host) dispatch(t *tunnel, m *internalv1.Upstream) {
 	}
 	if err != nil {
 		// Overloaded scene: reject rather than queue without bound.
-		t.send(&internalv1.Downstream{Uid: uid, Body: &internalv1.Downstream_CloseReason{CloseReason: "scene busy"}})
+		t.send(&backendv1.Downstream{Uid: uid, Body: &backendv1.Downstream_CloseReason{CloseReason: "scene busy"}})
 	}
 }
 
-func (s *sceneRun) attach(t *tunnel, uid int64, a *internalv1.Attach) {
+func (s *sceneRun) attach(t *tunnel, uid int64, a *backendv1.Attach) {
 	p, known := s.players[uid]
 	if known && a.GetEpoch() < p.epoch {
-		t.send(&internalv1.Downstream{Uid: uid, Epoch: a.GetEpoch(),
-			Body: &internalv1.Downstream_CloseReason{CloseReason: "stale login"}})
+		t.send(&backendv1.Downstream{Uid: uid, Epoch: a.GetEpoch(),
+			Body: &backendv1.Downstream_CloseReason{CloseReason: "stale login"}})
 		return
 	}
 	if !known {
@@ -292,8 +294,8 @@ func (s *sceneRun) attach(t *tunnel, uid int64, a *internalv1.Attach) {
 	wasOffline := !p.Online()
 	if p.tun != nil && p.epoch != a.GetEpoch() {
 		// A newer login arrived, possibly through another gateway.
-		p.tun.send(&internalv1.Downstream{Uid: uid, Epoch: p.epoch,
-			Body: &internalv1.Downstream_CloseReason{CloseReason: "logged in elsewhere"}})
+		p.tun.send(&backendv1.Downstream{Uid: uid, Epoch: p.epoch,
+			Body: &backendv1.Downstream_CloseReason{CloseReason: "logged in elsewhere"}})
 	}
 	p.tun, p.epoch, p.channel = t, a.GetEpoch(), a.GetChannel()
 	p.offGen++ // Cancels any pending grace expiry.
@@ -315,7 +317,13 @@ func (s *sceneRun) attach(t *tunnel, uid int64, a *internalv1.Attach) {
 		if !known {
 			s.scene.OnJoin(p)
 		}
-		id, snap := s.scene.Snapshot(p)
+		id, snap, err := s.scene.Snapshot(p)
+		if err != nil {
+			slog.Error("snapshot", "scene", s.key, "uid", uid, "err", err)
+			t.send(&backendv1.Downstream{Uid: uid, Epoch: p.epoch,
+				Body: &backendv1.Downstream_CloseReason{CloseReason: "snapshot unavailable"}})
+			return
+		}
 		p.Push(id, snap)
 	}
 	if known && wasOffline {

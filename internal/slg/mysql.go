@@ -21,6 +21,15 @@ func (s *MySQLStore) Create(ctx context.Context, m March) error {
 	return err
 }
 
+// Troops implements Store.
+func (s *MySQLStore) Troops(ctx context.Context, kingdom string, uid int64) (int64, error) {
+	var total int64
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(troops), 0) FROM slg_march WHERE uid = ? AND state = 1 AND kingdom = ?`,
+		uid, kingdom).Scan(&total)
+	return total, err
+}
+
 // Arrive implements Store. The state guard in the UPDATE is the exactly-once
 // point: of any number of re-fires, one sees a changed row.
 func (s *MySQLStore) Arrive(ctx context.Context, id uint64) (March, bool, error) {

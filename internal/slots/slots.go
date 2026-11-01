@@ -20,6 +20,7 @@ import (
 	"github.com/yourname/gameserver/pkg/auth"
 	"github.com/yourname/gameserver/pkg/events"
 	"github.com/yourname/gameserver/pkg/idgen"
+	"github.com/yourname/gameserver/pkg/session"
 	"github.com/yourname/gameserver/pkg/wallet"
 )
 
@@ -92,6 +93,7 @@ func spin(rng RNG, bet int64) (Result, error) {
 type Service struct {
 	Wallet wallet.Wallet
 	Signer *auth.Signer
+	Epochs session.Epochs
 	IDs    *idgen.Generator
 	RNG    RNG
 }
@@ -150,8 +152,20 @@ func (s *Service) handleSpin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// A spin moves value, so a superseded login must not be able to bet. This
+	// fails closed: with Redis down, spins stop rather than skip the check.
+	cur, err := s.Epochs.Current(r.Context(), claims.UID)
+	if err != nil {
+		slog.Error("spin epoch check", "uid", claims.UID, "err", err)
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if claims.Epoch != cur {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
-	env, req := &gamev1.Envelope{}, &gamev1.SpinReq{}
+	env, req :=&gamev1.Envelope{}, &gamev1.SpinReq{}
 	if err != nil || proto.Unmarshal(body, env) != nil || proto.Unmarshal(env.GetPayload(), req) != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return

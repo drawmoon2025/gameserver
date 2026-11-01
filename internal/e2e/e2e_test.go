@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	internalv1 "github.com/yourname/gameserver/gen/internal/v1"
+	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
 	"github.com/yourname/gameserver/internal/gamehost"
 	"github.com/yourname/gameserver/internal/gateway"
 	"github.com/yourname/gameserver/internal/room"
@@ -42,7 +42,7 @@ func startBackend(t *testing.T, f gamehost.Factory, grace time.Duration) string 
 	}
 	host := gamehost.New(gamehost.Config{Factory: f, Grace: grace, ReplayFrames: 8})
 	srv := grpc.NewServer()
-	internalv1.RegisterGameBackendServer(srv, host)
+	backendv1.RegisterGameBackendServer(srv, host)
 	go srv.Serve(lis) //nolint:errcheck // Stops with the test.
 	t.Cleanup(func() { srv.Stop(); host.Stop() })
 	return lis.Addr().String()
@@ -296,7 +296,7 @@ func TestOneConnectionReachesTwoServices(t *testing.T) {
 	if env := c.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP); env.GetChannel() != 0 {
 		t.Fatalf("room channel %d", env.GetChannel())
 	}
-	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1},
+	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1, Channel: 1},
 		&gamev1.MarchReq{ToX: 3, ToY: 4, Troops: 100})
 	if env := c.until(gamev1.MsgId_MSG_ID_MARCH_RSP); env.GetChannel() != 1 {
 		t.Fatalf("world channel %d", env.GetChannel())
@@ -342,7 +342,7 @@ func TestMarchSurvivesWorldRestart(t *testing.T) {
 
 	// Second process: picks the job up from storage and completes it.
 	second := timer.New(timer.Config{Owner: "b", Store: store, Poll: 10 * time.Millisecond})
-	slg.New(slg.Config{Store: marches, Scheduler: second, IDs: ids})
+	w2 := slg.New(slg.Config{Store: marches, Scheduler: second, IDs: ids})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go second.Run(ctx) //nolint:errcheck // Ends with the test.
@@ -352,5 +352,85 @@ func TestMarchSurvivesWorldRestart(t *testing.T) {
 			t.Fatal("march never completed after restart")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The kingdom was not loaded when the march arrived, so only the store
+	// knows. A fresh snapshot must still show the troops.
+	s2 := newStack(t, map[string][]string{"world": {startBackend(t, w2.Factory, time.Minute)}})
+	c2 := s2.dial(t, s2.login(t, 1), &gamev1.Binding{Service: "world", Key: "k1"})
+	snap := &gamev1.RoomSnapshot{}
+	if err := proto.Unmarshal(c2.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT).GetPayload(), snap); err != nil {
+		t.Fatal(err)
+	}
+	if snap.GetValue() != 1 {
+		t.Fatalf("snapshot troops %d, want 1", snap.GetValue())
+	}
+}
+
+// watchScene reports disconnects, to observe what the backend believes.
+type watchScene struct {
+	gamehost.Scene
+	gone chan int64
+}
+
+func (w watchScene) OnDisconnect(p *gamehost.Player) { w.gone <- p.UID }
+
+func TestFailedHandshakeLeavesNoOnlineBinding(t *testing.T) {
+	gone := make(chan int64, 1)
+	addr := startBackend(t, func(key string, ctx *gamehost.SceneContext) gamehost.Scene {
+		return watchScene{Scene: room.Factory(key, ctx), gone: gone}
+	}, time.Minute)
+	s := newStack(t, map[string][]string{"room": {addr}})
+	// The first binding attaches, the second has no node to resolve.
+	s.dial(t, s.login(t, 1), roomBinding(0), &gamev1.Binding{Service: "missing", Key: "x"})
+	select {
+	case uid := <-gone:
+		if uid != 1 {
+			t.Fatalf("uid %d", uid)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the first binding stayed online after the handshake failed")
+	}
+}
+
+func TestDuplicateBindingIsRejected(t *testing.T) {
+	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}})
+	c := s.dial(t, s.login(t, 1), roomBinding(0), roomBinding(0))
+	for {
+		if _, err := c.tryRead(2 * time.Second); err != nil {
+			return // Closed, as required.
+		}
+	}
+}
+
+func TestChannelSelectsBindingOfSameService(t *testing.T) {
+	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}})
+	c := s.dial(t, s.login(t, 1),
+		&gamev1.Binding{Service: "room", Key: "a"}, &gamev1.Binding{Service: "room", Key: "b"})
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+
+	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_ROOM_ACTION_REQ), ClientSeq: 1, Channel: 1},
+		&gamev1.RoomActionReq{Delta: 9})
+	if env := c.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP); env.GetChannel() != 1 || value(t, env) != 9 {
+		t.Fatalf("second room: %v", env)
+	}
+	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_ROOM_ACTION_REQ), ClientSeq: 1, Channel: 0},
+		&gamev1.RoomActionReq{Delta: 1})
+	if env := c.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP); env.GetChannel() != 0 || value(t, env) != 1 {
+		t.Fatalf("first room must be untouched by the second: %v", env)
+	}
+}
+
+func TestChannelForWrongServiceClosesConnection(t *testing.T) {
+	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}})
+	c := s.dial(t, s.login(t, 1), roomBinding(0))
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1},
+		&gamev1.MarchReq{ToX: 1, Troops: 1})
+	for {
+		if _, err := c.tryRead(2 * time.Second); err != nil {
+			return // Closed, as required.
+		}
 	}
 }

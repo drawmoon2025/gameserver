@@ -3,10 +3,10 @@ package slg
 import (
 	"fmt"
 
-	"github.com/yourname/gameserver/internal/battle"
-	"github.com/yourname/gameserver/internal/mail"
-	"github.com/yourname/gameserver/internal/rank"
-	"github.com/yourname/gameserver/pkg/timer"
+	"github.com/drawmoon2025/gameserver/internal/battle"
+	"github.com/drawmoon2025/gameserver/internal/mail"
+	"github.com/drawmoon2025/gameserver/internal/rank"
+	"github.com/drawmoon2025/gameserver/pkg/timer"
 )
 
 // tile is who holds one map cell. A zero value is empty.

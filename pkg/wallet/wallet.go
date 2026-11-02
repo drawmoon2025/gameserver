@@ -8,7 +8,7 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/yourname/gameserver/pkg/events"
+	"github.com/drawmoon2025/gameserver/pkg/events"
 )
 
 var (

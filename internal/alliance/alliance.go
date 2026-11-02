@@ -13,10 +13,10 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	"github.com/yourname/gameserver/internal/chat"
-	"github.com/yourname/gameserver/internal/gamehost"
-	"github.com/yourname/gameserver/pkg/timer"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	"github.com/drawmoon2025/gameserver/internal/chat"
+	"github.com/drawmoon2025/gameserver/pkg/gamehost"
+	"github.com/drawmoon2025/gameserver/pkg/timer"
 )
 
 // MaxMembers is the size limit of an alliance.

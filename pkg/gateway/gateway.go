@@ -21,11 +21,11 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/protobuf/proto"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
-	"github.com/yourname/gameserver/pkg/auth"
-	"github.com/yourname/gameserver/pkg/discovery"
-	"github.com/yourname/gameserver/pkg/session"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	backendv1 "github.com/drawmoon2025/gameserver/gen/backend/v1"
+	"github.com/drawmoon2025/gameserver/pkg/auth"
+	"github.com/drawmoon2025/gameserver/pkg/discovery"
+	"github.com/drawmoon2025/gameserver/pkg/session"
 )
 
 // Routes maps a client message ID to a service name, by range. This is how one

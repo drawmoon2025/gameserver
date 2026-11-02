@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package game.v1;
 
-option go_package = "github.com/yourname/gameserver/gen/game/v1;gamev1";
+option go_package = "github.com/drawmoon2025/gameserver/gen/game/v1;gamev1";
 
 // Envelope wraps every client<->server message on WebSocket and HTTP alike.
 message Envelope {

@@ -13,8 +13,8 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"github.com/yourname/gameserver/internal/itest"
-	"github.com/yourname/gameserver/pkg/discovery"
+	"github.com/drawmoon2025/gameserver/internal/itest"
+	"github.com/drawmoon2025/gameserver/pkg/discovery"
 )
 
 func client(t *testing.T) *clientv3.Client {

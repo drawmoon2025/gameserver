@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yourname/gameserver/internal/city"
-	"github.com/yourname/gameserver/internal/itest"
-	"github.com/yourname/gameserver/pkg/timer"
+	"github.com/drawmoon2025/gameserver/internal/city"
+	"github.com/drawmoon2025/gameserver/internal/itest"
+	"github.com/drawmoon2025/gameserver/pkg/timer"
 )
 
 func marchFixture() (March, timer.Job) {

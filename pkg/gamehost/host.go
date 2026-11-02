@@ -16,10 +16,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
-	"github.com/yourname/gameserver/pkg/actor"
-	"github.com/yourname/gameserver/pkg/resume"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	backendv1 "github.com/drawmoon2025/gameserver/gen/backend/v1"
+	"github.com/drawmoon2025/gameserver/pkg/actor"
+	"github.com/drawmoon2025/gameserver/pkg/resume"
 )
 
 // Reply is a handler's response. Code is ignored when Msg is set by mistake

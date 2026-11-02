@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yourname/gameserver/pkg/timer"
+	"github.com/drawmoon2025/gameserver/pkg/timer"
 )
 
 // MySQL persists cities. timer_job must be in the same database, so that an

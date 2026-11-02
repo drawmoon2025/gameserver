@@ -24,7 +24,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 
-	"github.com/yourname/gameserver/pkg/discovery"
+	"github.com/drawmoon2025/gameserver/pkg/discovery"
 )
 
 // ErrLeaseLost means the node's slots are gone and the process should restart.

@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 
-	"github.com/yourname/gameserver/internal/city"
-	"github.com/yourname/gameserver/pkg/timer"
+	"github.com/drawmoon2025/gameserver/internal/city"
+	"github.com/drawmoon2025/gameserver/pkg/timer"
 )
 
 // MySQLStore persists marches. The kingdom's database holds them all, and it

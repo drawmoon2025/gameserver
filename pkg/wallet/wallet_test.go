@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yourname/gameserver/pkg/events"
+	"github.com/drawmoon2025/gameserver/pkg/events"
 )
 
 func funded(t *testing.T, amount int64) *Memory {

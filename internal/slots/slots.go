@@ -16,12 +16,12 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	"github.com/yourname/gameserver/pkg/auth"
-	"github.com/yourname/gameserver/pkg/events"
-	"github.com/yourname/gameserver/pkg/idgen"
-	"github.com/yourname/gameserver/pkg/session"
-	"github.com/yourname/gameserver/pkg/wallet"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	"github.com/drawmoon2025/gameserver/pkg/auth"
+	"github.com/drawmoon2025/gameserver/pkg/events"
+	"github.com/drawmoon2025/gameserver/pkg/idgen"
+	"github.com/drawmoon2025/gameserver/pkg/session"
+	"github.com/drawmoon2025/gameserver/pkg/wallet"
 )
 
 // Reel weights and pays are sample data. Replace them with a certified math

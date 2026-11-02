@@ -9,7 +9,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/yourname/gameserver/internal/realm"
+	"github.com/drawmoon2025/gameserver/pkg/realm"
 )
 
 func TestHistoryIsCappedAndOrdered(t *testing.T) {

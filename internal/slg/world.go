@@ -18,14 +18,14 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	"github.com/yourname/gameserver/internal/city"
-	"github.com/yourname/gameserver/internal/gamehost"
-	"github.com/yourname/gameserver/internal/realm"
-	"github.com/yourname/gameserver/pkg/actor"
-	"github.com/yourname/gameserver/pkg/discovery"
-	"github.com/yourname/gameserver/pkg/idgen"
-	"github.com/yourname/gameserver/pkg/timer"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	"github.com/drawmoon2025/gameserver/internal/city"
+	"github.com/drawmoon2025/gameserver/pkg/gamehost"
+	"github.com/drawmoon2025/gameserver/pkg/realm"
+	"github.com/drawmoon2025/gameserver/pkg/actor"
+	"github.com/drawmoon2025/gameserver/pkg/discovery"
+	"github.com/drawmoon2025/gameserver/pkg/idgen"
+	"github.com/drawmoon2025/gameserver/pkg/timer"
 )
 
 // KindMarchArrive is the durable timer kind for a march reaching its target.

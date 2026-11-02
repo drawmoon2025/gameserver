@@ -3291,7 +3291,7 @@ const file_game_v1_envelope_proto_rawDesc = "" +
 	" ERROR_CODE_DUPLICATE_IN_PROGRESS\x10\x05\x12\x17\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\x06\x12\x13\n" +
 	"\x0fERROR_CODE_BUSY\x10\a\x12 \n" +
-	"\x1cERROR_CODE_NOT_ENOUGH_TROOPS\x10\bB3Z1github.com/yourname/gameserver/gen/game/v1;gamev1b\x06proto3"
+	"\x1cERROR_CODE_NOT_ENOUGH_TROOPS\x10\bB7Z5github.com/drawmoon2025/gameserver/gen/game/v1;gamev1b\x06proto3"
 
 var (
 	file_game_v1_envelope_proto_rawDescOnce sync.Once

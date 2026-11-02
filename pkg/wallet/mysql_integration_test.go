@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/yourname/gameserver/internal/itest"
-	"github.com/yourname/gameserver/pkg/events"
-	"github.com/yourname/gameserver/pkg/shard"
+	"github.com/drawmoon2025/gameserver/internal/itest"
+	"github.com/drawmoon2025/gameserver/pkg/events"
+	"github.com/drawmoon2025/gameserver/pkg/shard"
 )
 
 func mysqlWallet(t *testing.T) (*MySQL, *sql.DB) {

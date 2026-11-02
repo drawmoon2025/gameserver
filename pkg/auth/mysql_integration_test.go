@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yourname/gameserver/internal/itest"
+	"github.com/drawmoon2025/gameserver/internal/itest"
 )
 
 func TestMySQLConcurrentFirstLoginsAgree(t *testing.T) {

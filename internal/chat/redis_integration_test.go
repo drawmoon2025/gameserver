@@ -10,7 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/yourname/gameserver/internal/itest"
+	"github.com/drawmoon2025/gameserver/internal/itest"
 )
 
 func TestRealRedisHistory(t *testing.T) {

@@ -15,12 +15,12 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	"github.com/yourname/gameserver/internal/gamehost"
-	"github.com/yourname/gameserver/internal/realm"
-	"github.com/yourname/gameserver/pkg/discovery"
-	"github.com/yourname/gameserver/pkg/idgen"
-	"github.com/yourname/gameserver/pkg/timer"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	"github.com/drawmoon2025/gameserver/pkg/gamehost"
+	"github.com/drawmoon2025/gameserver/pkg/realm"
+	"github.com/drawmoon2025/gameserver/pkg/discovery"
+	"github.com/drawmoon2025/gameserver/pkg/idgen"
+	"github.com/drawmoon2025/gameserver/pkg/timer"
 )
 
 // ShardBase places this service's timer shards after the rank service's.

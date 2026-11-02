@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yourname/gameserver/internal/itest"
+	"github.com/drawmoon2025/gameserver/internal/itest"
 )
 
 func TestMySQLStoreFencingAndLifecycle(t *testing.T) {

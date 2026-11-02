@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	"github.com/yourname/gameserver/pkg/auth"
-	"github.com/yourname/gameserver/pkg/idgen"
-	"github.com/yourname/gameserver/pkg/session"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	"github.com/drawmoon2025/gameserver/pkg/auth"
+	"github.com/drawmoon2025/gameserver/pkg/idgen"
+	"github.com/drawmoon2025/gameserver/pkg/session"
 )
 
 const maxBody = 4 << 10

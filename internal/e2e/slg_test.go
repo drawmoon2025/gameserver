@@ -8,14 +8,14 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	"github.com/yourname/gameserver/internal/city"
-	"github.com/yourname/gameserver/internal/mail"
-	"github.com/yourname/gameserver/internal/rank"
-	"github.com/yourname/gameserver/internal/realm"
-	"github.com/yourname/gameserver/internal/slg"
-	"github.com/yourname/gameserver/pkg/discovery"
-	"github.com/yourname/gameserver/pkg/timer"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	"github.com/drawmoon2025/gameserver/internal/city"
+	"github.com/drawmoon2025/gameserver/internal/mail"
+	"github.com/drawmoon2025/gameserver/internal/rank"
+	"github.com/drawmoon2025/gameserver/pkg/realm"
+	"github.com/drawmoon2025/gameserver/internal/slg"
+	"github.com/drawmoon2025/gameserver/pkg/discovery"
+	"github.com/drawmoon2025/gameserver/pkg/timer"
 )
 
 // kingdom is world, city and mail sharing one job store, as they share a

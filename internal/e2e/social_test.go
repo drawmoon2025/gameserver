@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	"github.com/yourname/gameserver/internal/alliance"
-	"github.com/yourname/gameserver/internal/chat"
-	"github.com/yourname/gameserver/internal/realm"
-	"github.com/yourname/gameserver/pkg/discovery"
-	"github.com/yourname/gameserver/pkg/idgen"
-	"github.com/yourname/gameserver/pkg/timer"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	"github.com/drawmoon2025/gameserver/internal/alliance"
+	"github.com/drawmoon2025/gameserver/internal/chat"
+	"github.com/drawmoon2025/gameserver/pkg/realm"
+	"github.com/drawmoon2025/gameserver/pkg/discovery"
+	"github.com/drawmoon2025/gameserver/pkg/idgen"
+	"github.com/drawmoon2025/gameserver/pkg/timer"
 )
 
 // society is alliance and chat sharing one job store.

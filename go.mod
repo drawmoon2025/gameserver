@@ -1,4 +1,4 @@
-module github.com/yourname/gameserver
+module github.com/drawmoon2025/gameserver
 
 go 1.25
 

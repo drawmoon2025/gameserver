@@ -10,7 +10,7 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
-	"github.com/yourname/gameserver/internal/itest"
+	"github.com/drawmoon2025/gameserver/internal/itest"
 )
 
 func TestRelayMovesOutboxToKafka(t *testing.T) {

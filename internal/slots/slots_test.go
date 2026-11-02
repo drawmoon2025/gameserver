@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/yourname/gameserver/pkg/idgen"
-	"github.com/yourname/gameserver/pkg/wallet"
+	"github.com/drawmoon2025/gameserver/pkg/idgen"
+	"github.com/drawmoon2025/gameserver/pkg/wallet"
 )
 
 func TestRTPIsInRange(t *testing.T) {

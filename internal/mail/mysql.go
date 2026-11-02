@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
-	"github.com/yourname/gameserver/pkg/timer"
+	"github.com/drawmoon2025/gameserver/pkg/timer"
 )
 
 // MySQL persists mail. timer_job must be in the same database, so that a claim

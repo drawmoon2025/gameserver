@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 
-	"github.com/yourname/gameserver/pkg/shard"
+	"github.com/drawmoon2025/gameserver/pkg/shard"
 )
 
 const (

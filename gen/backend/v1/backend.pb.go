@@ -392,7 +392,7 @@ const file_backend_v1_backend_proto_rawDesc = "" +
 	"\fclose_reason\x18\x04 \x01(\tH\x00R\vcloseReasonB\x06\n" +
 	"\x04body2I\n" +
 	"\vGameBackend\x12:\n" +
-	"\x06Tunnel\x12\x14.backend.v1.Upstream\x1a\x16.backend.v1.Downstream(\x010\x01B9Z7github.com/yourname/gameserver/gen/backend/v1;backendv1b\x06proto3"
+	"\x06Tunnel\x12\x14.backend.v1.Upstream\x1a\x16.backend.v1.Downstream(\x010\x01B=Z;github.com/drawmoon2025/gameserver/gen/backend/v1;backendv1b\x06proto3"
 
 var (
 	file_backend_v1_backend_proto_rawDescOnce sync.Once

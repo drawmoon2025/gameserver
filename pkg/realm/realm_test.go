@@ -12,9 +12,9 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	"github.com/yourname/gameserver/pkg/auth"
-	"github.com/yourname/gameserver/pkg/session"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	"github.com/drawmoon2025/gameserver/pkg/auth"
+	"github.com/drawmoon2025/gameserver/pkg/session"
 )
 
 func TestBaseIsOnTheMapAndRepeatable(t *testing.T) {

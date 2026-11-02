@@ -5,8 +5,8 @@ package room
 import (
 	"google.golang.org/protobuf/proto"
 
-	gamev1 "github.com/yourname/gameserver/gen/game/v1"
-	"github.com/yourname/gameserver/internal/gamehost"
+	gamev1 "github.com/drawmoon2025/gameserver/gen/game/v1"
+	"github.com/drawmoon2025/gameserver/pkg/gamehost"
 )
 
 // Room is one scene. Fields are actor-only.

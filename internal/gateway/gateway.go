@@ -112,6 +112,7 @@ type conn struct {
 	ws       *websocket.Conn
 	out      chan []byte
 	closed   chan struct{}
+	flushed  chan struct{} // Closed once writeLoop has stopped writing.
 	once     sync.Once
 	reason   atomic.Value // string
 	bindings []bound
@@ -221,7 +222,7 @@ func (g *Gateway) handshake(ctx context.Context, ws *websocket.Conn) (*conn, err
 	}
 
 	c := &conn{id: g.nextConn.Add(1), uid: claims.UID, epoch: claims.Epoch, ws: ws,
-		out: make(chan []byte, g.cfg.SendQueue), closed: make(chan struct{}),
+		out: make(chan []byte, g.cfg.SendQueue), closed: make(chan struct{}), flushed: make(chan struct{}),
 		limiter: rate.NewLimiter(g.cfg.RateLimit, g.cfg.RateBurst)}
 	attached := false
 	defer func() {
@@ -265,8 +266,10 @@ func (g *Gateway) readLoop(ctx context.Context, c *conn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
+		// Cancelling a read closes the socket, so wait for queued frames, which
+		// may include the Kick explaining why this connection is closing.
 		select {
-		case <-c.closed:
+		case <-c.flushed:
 			cancel()
 		case <-ctx.Done():
 		}
@@ -315,18 +318,36 @@ func (g *Gateway) readLoop(ctx context.Context, c *conn) {
 }
 
 func (g *Gateway) writeLoop(ctx context.Context, c *conn) {
+	defer close(c.flushed)
+	write := func(ctx context.Context, frame []byte, limit time.Duration) bool {
+		wctx, cancel := context.WithTimeout(ctx, limit)
+		defer cancel()
+		if err := c.ws.Write(wctx, websocket.MessageBinary, frame); err != nil {
+			c.shut("write failed")
+			return false
+		}
+		return true
+	}
 	for {
 		select {
 		case <-c.closed:
-			return
+			// A slow client must not hold its socket open, so the flush is bounded.
+			fctx, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			for {
+				select {
+				case frame := <-c.out:
+					if !write(fctx, frame, time.Second) {
+						return
+					}
+				default:
+					return
+				}
+			}
 		case <-ctx.Done():
 			return
 		case frame := <-c.out:
-			wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := c.ws.Write(wctx, websocket.MessageBinary, frame)
-			cancel()
-			if err != nil {
-				c.shut("write failed")
+			if !write(ctx, frame, 10*time.Second) {
 				return
 			}
 		}

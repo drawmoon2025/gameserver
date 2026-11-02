@@ -125,5 +125,3 @@ load tested.
 - Rate limits exist per connection only, not per IP or per account.
 - Gateway-to-backend gRPC is plaintext; use mTLS or a private network.
 - The slot math is sample data, not a certified model.
-- The `Kick` frame sent before a server-side close is best-effort; a client must treat
-  any close as a reason to reconnect.

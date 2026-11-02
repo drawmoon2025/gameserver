@@ -131,6 +131,7 @@ type Player struct {
 	sess    *resume.Session
 	epoch   uint64
 	channel uint32
+	conn    uint64  // The socket on tun that currently owns this seat.
 	tun     *tunnel // Nil while disconnected.
 	offGen  uint64  // Invalidates an older grace timer.
 }
@@ -163,9 +164,31 @@ func (p *Player) stamp(env *gamev1.Envelope) resume.Stamp {
 
 func (p *Player) send(frame []byte) {
 	if p.tun != nil {
-		p.tun.send(&backendv1.Downstream{Uid: p.UID, Epoch: p.epoch,
+		p.tun.send(&backendv1.Downstream{Uid: p.UID, Conn: p.conn,
 			Body: &backendv1.Downstream_Frame{Frame: frame}})
 	}
+}
+
+// resend sends a retained frame on the current channel. A frame keeps the
+// channel of the connection it was stamped for, and a reconnecting client may
+// list its bindings in a different order.
+func (p *Player) resend(frame []byte) {
+	env := &gamev1.Envelope{}
+	if err := proto.Unmarshal(frame, env); err != nil {
+		slog.Error("unmarshal retained frame", "uid", p.UID, "err", err)
+		return
+	}
+	if env.GetChannel() == p.channel {
+		p.send(frame)
+		return
+	}
+	env.Channel = p.channel
+	b, err := proto.Marshal(env)
+	if err != nil {
+		slog.Error("marshal retained frame", "uid", p.UID, "err", err)
+		return
+	}
+	p.send(b)
 }
 
 // Tunnel implements GameBackend: one stream per gateway.
@@ -259,31 +282,32 @@ func (h *Host) tunnelGone(t *tunnel) {
 
 func (h *Host) dispatch(t *tunnel, m *backendv1.Upstream) {
 	s := h.sceneFor(m.GetKey())
-	uid := m.GetUid()
+	uid, conn := m.GetUid(), m.GetConn()
 	var err error
 	switch b := m.GetBody().(type) {
 	case *backendv1.Upstream_Attach:
 		t.track(s, uid)
-		err = s.actor.Tell(func() { s.attach(t, uid, b.Attach) })
+		err = s.actor.Tell(func() { s.attach(t, uid, conn, b.Attach) })
 	case *backendv1.Upstream_Frame:
-		err = s.actor.Tell(func() { s.frame(t, uid, b.Frame) })
+		err = s.actor.Tell(func() { s.frame(t, uid, conn, b.Frame) })
 	case *backendv1.Upstream_Detach:
 		err = s.actor.Tell(func() {
-			if p := s.players[uid]; p != nil && p.epoch == b.Detach.GetEpoch() && p.tun == t {
+			// A replaced socket may detach after its successor has attached.
+			if p := s.players[uid]; p != nil && p.tun == t && p.conn == conn {
 				s.disconnect(p)
 			}
 		})
 	}
 	if err != nil {
 		// Overloaded scene: reject rather than queue without bound.
-		t.send(&backendv1.Downstream{Uid: uid, Body: &backendv1.Downstream_CloseReason{CloseReason: "scene busy"}})
+		t.send(&backendv1.Downstream{Uid: uid, Conn: conn, Body: &backendv1.Downstream_CloseReason{CloseReason: "scene busy"}})
 	}
 }
 
-func (s *sceneRun) attach(t *tunnel, uid int64, a *backendv1.Attach) {
+func (s *sceneRun) attach(t *tunnel, uid int64, conn uint64, a *backendv1.Attach) {
 	p, known := s.players[uid]
 	if known && a.GetEpoch() < p.epoch {
-		t.send(&backendv1.Downstream{Uid: uid, Epoch: a.GetEpoch(),
+		t.send(&backendv1.Downstream{Uid: uid, Conn: conn,
 			Body: &backendv1.Downstream_CloseReason{CloseReason: "stale login"}})
 		return
 	}
@@ -292,12 +316,17 @@ func (s *sceneRun) attach(t *tunnel, uid int64, a *backendv1.Attach) {
 		s.players[uid] = p
 	}
 	wasOffline := !p.Online()
-	if p.tun != nil && p.epoch != a.GetEpoch() {
-		// A newer login arrived, possibly through another gateway.
-		p.tun.send(&backendv1.Downstream{Uid: uid, Epoch: p.epoch,
-			Body: &backendv1.Downstream_CloseReason{CloseReason: "logged in elsewhere"}})
+	if p.tun != nil {
+		// A seat has one socket: the newest. It may be a newer login, or the
+		// same token reconnecting before the old socket was noticed as dead.
+		reason := "connection replaced"
+		if p.epoch != a.GetEpoch() {
+			reason = "logged in elsewhere"
+		}
+		p.tun.send(&backendv1.Downstream{Uid: uid, Conn: p.conn,
+			Body: &backendv1.Downstream_CloseReason{CloseReason: reason}})
 	}
-	p.tun, p.epoch, p.channel = t, a.GetEpoch(), a.GetChannel()
+	p.tun, p.conn, p.epoch, p.channel = t, conn, a.GetEpoch(), a.GetChannel()
 	p.offGen++ // Cancels any pending grace expiry.
 
 	var (
@@ -311,7 +340,7 @@ func (s *sceneRun) attach(t *tunnel, uid int64, a *backendv1.Attach) {
 	switch {
 	case replayed:
 		for _, f := range frames {
-			p.send(f)
+			p.resend(f)
 		}
 	default:
 		if !known {
@@ -320,7 +349,7 @@ func (s *sceneRun) attach(t *tunnel, uid int64, a *backendv1.Attach) {
 		id, snap, err := s.scene.Snapshot(p)
 		if err != nil {
 			slog.Error("snapshot", "scene", s.key, "uid", uid, "err", err)
-			t.send(&backendv1.Downstream{Uid: uid, Epoch: p.epoch,
+			t.send(&backendv1.Downstream{Uid: uid, Conn: conn,
 				Body: &backendv1.Downstream_CloseReason{CloseReason: "snapshot unavailable"}})
 			return
 		}
@@ -346,9 +375,9 @@ func (p *Player) direct(id gamev1.MsgId, msg proto.Message) {
 	p.send(b)
 }
 
-func (s *sceneRun) frame(t *tunnel, uid int64, raw []byte) {
+func (s *sceneRun) frame(t *tunnel, uid int64, conn uint64, raw []byte) {
 	p := s.players[uid]
-	if p == nil || p.tun != t {
+	if p == nil || p.tun != t || p.conn != conn {
 		return // Racing a kick or a tunnel change.
 	}
 	env := &gamev1.Envelope{}
@@ -362,7 +391,7 @@ func (s *sceneRun) frame(t *tunnel, uid int64, raw []byte) {
 		return
 	case resume.ResendLast:
 		if last != nil {
-			p.send(last)
+			p.resend(last)
 		}
 		return
 	}

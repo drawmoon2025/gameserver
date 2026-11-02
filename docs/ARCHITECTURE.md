@@ -33,6 +33,13 @@ The game node holds the replay ring, so a gateway crash loses nothing.
 3. The host replies with `ResumeRsp`, then either replays the gap or sends a snapshot.
 4. `client_seq` dedupes retried requests.
 
+A binding's position may change between connections, so `last_seq` belongs to the service
+and key, not to the channel number. Replayed frames are re-stamped with the current channel.
+
+A player's seat in a scene has one socket: the newest. Every message between gateway and
+host names its socket, so a socket only receives its own scenes' frames, and a replaced
+socket cannot act or detach its successor. The replaced socket is closed.
+
 Clients must reconnect with exponential backoff and jitter. `Gateway.Drain` spreads
 disconnects over a window, so a rolling deploy does not synchronize them.
 
@@ -118,3 +125,5 @@ load tested.
 - Rate limits exist per connection only, not per IP or per account.
 - Gateway-to-backend gRPC is plaintext; use mTLS or a private network.
 - The slot math is sample data, not a certified model.
+- The `Kick` frame sent before a server-side close is best-effort; a client must treat
+  any close as a reason to reconnect.

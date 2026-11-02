@@ -422,6 +422,90 @@ func TestChannelSelectsBindingOfSameService(t *testing.T) {
 	}
 }
 
+func TestSocketsOfOneTokenOnlySeeTheirOwnRooms(t *testing.T) {
+	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}})
+	tok := s.login(t, 1)
+	a := s.dial(t, tok, &gamev1.Binding{Service: "room", Key: "a"})
+	a.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	b := s.dial(t, tok, &gamev1.Binding{Service: "room", Key: "b"})
+	b.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	action(b, 1, 1)
+	b.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+	if env, err := a.tryRead(300 * time.Millisecond); err == nil {
+		t.Fatalf("socket bound to room a received a frame from room b: %v", env)
+	}
+}
+
+// swapped binds rooms a and b in the opposite order to the first connection.
+func swapped(last uint64) []*gamev1.Binding {
+	return []*gamev1.Binding{{Service: "room", Key: "b"}, {Service: "room", Key: "a", LastSeq: last}}
+}
+
+func TestReplayUsesCurrentChannel(t *testing.T) {
+	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}})
+	tok := s.login(t, 1)
+	other := s.dial(t, s.login(t, 2), &gamev1.Binding{Service: "room", Key: "a"})
+	other.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c := s.dial(t, tok, &gamev1.Binding{Service: "room", Key: "a"}, &gamev1.Binding{Service: "room", Key: "b"})
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	action(c, 1, 1)
+	last := c.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP).GetSeq()
+	other.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+	if err := c.ws.CloseNow(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	action(other, 1, 2) // Stored for player 1 while room a was channel 0.
+	other.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+
+	c2 := s.dial(t, tok, swapped(last)...)
+	env := c2.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+	if env.GetChannel() != 1 || value(t, env) != 3 {
+		t.Fatalf("replayed frame: %v", env)
+	}
+}
+
+func TestRetryAfterReconnectUsesCurrentChannel(t *testing.T) {
+	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}})
+	tok := s.login(t, 1)
+	c := s.dial(t, tok, &gamev1.Binding{Service: "room", Key: "a"}, &gamev1.Binding{Service: "room", Key: "b"})
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	action(c, 1, 5)
+	first := c.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+	if err := c.ws.CloseNow(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	c2 := s.dial(t, tok, swapped(first.GetSeq())...)
+	c2.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT) // Room b, which is fresh.
+	c2.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_ROOM_ACTION_REQ), ClientSeq: 1, Channel: 1},
+		&gamev1.RoomActionReq{Delta: 5})
+	env := c2.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+	if env.GetChannel() != 1 || env.GetSeq() != first.GetSeq() || value(t, env) != 5 {
+		t.Fatalf("resent response: %v", env)
+	}
+}
+
+func TestReplacedSocketCannotDetachItsSuccessor(t *testing.T) {
+	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}})
+	tok := s.login(t, 1)
+	old := s.dial(t, tok, roomBinding(0))
+	old.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	fresh := s.dial(t, tok, roomBinding(0))
+	fresh.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	for {
+		if _, err := old.tryRead(2 * time.Second); err != nil {
+			break // The host closed the replaced socket.
+		}
+	}
+	time.Sleep(100 * time.Millisecond) // Let its detach reach the host.
+	action(fresh, 1, 1)
+	fresh.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+}
+
 func TestChannelForWrongServiceClosesConnection(t *testing.T) {
 	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}})
 	c := s.dial(t, s.login(t, 1), roomBinding(0))

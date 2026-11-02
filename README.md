@@ -3,8 +3,7 @@
 Go game server framework: WebSocket room and SLG games, HTTP slots, Protobuf,
 Redis, MySQL and optional Kafka.
 
-**Status: not yet compiled or tested.** It was written on a machine without Go.
-Run the verification below first and expect to fix compile errors.
+**Status: early.** Tests use in-memory stores; nothing has been load tested.
 
 Design and known gaps: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -23,9 +22,14 @@ bash scripts/verify.sh                                        # Linux/macOS
 
 In China, first run `go env -w GOPROXY=https://goproxy.cn,direct`.
 
-The script generates `gen/`, tidies modules, then builds, vets and tests. Tests
-use in-memory stores and need no Docker, so the MySQL and Kafka code is compiled
-but not exercised.
+The script generates `gen/`, then builds, vets and tests. Tests use in-memory
+stores and need no Docker, so the MySQL and Kafka code is compiled but not
+exercised.
+
+Dependency and protoc plugin versions are pinned and the script uses the installed
+Go (`GOTOOLCHAIN=local`). If `go.sum` is missing, the script creates it. Commit
+`go.mod`, `go.sum` and `gen/` afterwards. Once `go.sum` exists, the script fails
+if the module files are out of date.
 
 ## Run locally
 

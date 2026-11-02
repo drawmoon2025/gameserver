@@ -51,7 +51,7 @@ enum ErrorCode {
 message Binding {
   string service = 1;
   string key = 2;       // Room or kingdom id; picks the owning node.
-  uint64 last_seq = 3;  // Highest seq seen on this channel; 0 when fresh.
+  uint64 last_seq = 3;  // Highest seq seen for this service and key; 0 when fresh.
 }
 
 // ConnectReq must be the first frame. A browser cannot set WebSocket headers,

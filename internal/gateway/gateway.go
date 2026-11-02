@@ -63,6 +63,7 @@ type Gateway struct {
 	cfg      Config
 	draining atomic.Bool
 	online   atomic.Int64
+	nextConn atomic.Uint64
 
 	mu      sync.Mutex
 	tunnels map[string]*tunnel
@@ -105,6 +106,7 @@ func (g *Gateway) Online() int64 { return g.online.Load() }
 
 // conn is one client socket.
 type conn struct {
+	id       uint64 // Unique in this gateway, so within any tunnel it owns.
 	uid      int64
 	epoch    uint64
 	ws       *websocket.Conn
@@ -218,7 +220,7 @@ func (g *Gateway) handshake(ctx context.Context, ws *websocket.Conn) (*conn, err
 		return nil, fmt.Errorf("stale epoch %d, current %d", claims.Epoch, cur)
 	}
 
-	c := &conn{uid: claims.UID, epoch: claims.Epoch, ws: ws,
+	c := &conn{id: g.nextConn.Add(1), uid: claims.UID, epoch: claims.Epoch, ws: ws,
 		out: make(chan []byte, g.cfg.SendQueue), closed: make(chan struct{}),
 		limiter: rate.NewLimiter(g.cfg.RateLimit, g.cfg.RateBurst)}
 	attached := false
@@ -247,7 +249,7 @@ func (g *Gateway) handshake(ctx context.Context, ws *websocket.Conn) (*conn, err
 		}
 		t.add(c)
 		c.bindings = append(c.bindings, bound{service: b.GetService(), key: b.GetKey(), tun: t})
-		err = t.sendUp(&backendv1.Upstream{Uid: c.uid, Key: b.GetKey(),
+		err = t.sendUp(&backendv1.Upstream{Uid: c.uid, Key: b.GetKey(), Conn: c.id,
 			Body: &backendv1.Upstream_Attach{Attach: &backendv1.Attach{
 				SessionId: claims.Session, Epoch: c.epoch, LastSeq: b.GetLastSeq(),
 				Resume: b.GetLastSeq() > 0, Key: b.GetKey(), Channel: uint32(i)}}})
@@ -304,7 +306,7 @@ func (g *Gateway) readLoop(ctx context.Context, c *conn) {
 			return
 		}
 		b := &c.bindings[ch]
-		if err := b.tun.sendUp(&backendv1.Upstream{Uid: c.uid, Key: b.key,
+		if err := b.tun.sendUp(&backendv1.Upstream{Uid: c.uid, Key: b.key, Conn: c.id,
 			Body: &backendv1.Upstream_Frame{Frame: data}}); err != nil {
 			c.shut("backend lost")
 			return
@@ -334,8 +336,8 @@ func (g *Gateway) writeLoop(ctx context.Context, c *conn) {
 func (g *Gateway) detach(c *conn) {
 	for _, b := range c.bindings {
 		b.tun.remove(c)
-		_ = b.tun.sendUp(&backendv1.Upstream{Uid: c.uid, Key: b.key,
-			Body: &backendv1.Upstream_Detach{Detach: &backendv1.Detach{Epoch: c.epoch}}})
+		_ = b.tun.sendUp(&backendv1.Upstream{Uid: c.uid, Key: b.key, Conn: c.id,
+			Body: &backendv1.Upstream_Detach{Detach: &backendv1.Detach{}}})
 	}
 }
 
@@ -377,7 +379,7 @@ type tunnel struct {
 	sendMu sync.Mutex // A gRPC stream allows one concurrent sender.
 
 	mu    sync.RWMutex
-	conns map[int64]map[*conn]struct{}
+	conns map[uint64]*conn
 	dead  bool
 }
 
@@ -398,7 +400,7 @@ func (g *Gateway) tunnel(addr string) (*tunnel, error) {
 		_ = cc.Close()
 		return nil, err
 	}
-	t := &tunnel{addr: addr, stream: stream, cancel: cancel, conns: map[int64]map[*conn]struct{}{}}
+	t := &tunnel{addr: addr, stream: stream, cancel: cancel, conns: map[uint64]*conn{}}
 	g.tunnels[addr] = t
 	go func() {
 		t.recvLoop()
@@ -416,19 +418,13 @@ func (t *tunnel) isDead() bool {
 func (t *tunnel) add(c *conn) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.conns[c.uid] == nil {
-		t.conns[c.uid] = map[*conn]struct{}{}
-	}
-	t.conns[c.uid][c] = struct{}{}
+	t.conns[c.id] = c
 }
 
 func (t *tunnel) remove(c *conn) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.conns[c.uid], c)
-	if len(t.conns[c.uid]) == 0 {
-		delete(t.conns, c.uid)
-	}
+	delete(t.conns, c.id)
 }
 
 func (t *tunnel) sendUp(m *backendv1.Upstream) error {
@@ -445,34 +441,28 @@ func (t *tunnel) recvLoop() {
 			t.mu.Lock()
 			t.dead = true
 			all := t.conns
-			t.conns = map[int64]map[*conn]struct{}{}
+			t.conns = map[uint64]*conn{}
 			t.mu.Unlock()
 			// The game node is gone: clients reconnect and re-resolve.
-			for _, set := range all {
-				for c := range set {
-					c.shut("backend lost")
-				}
+			for _, c := range all {
+				c.shut("backend lost")
 			}
 			return
 		}
 		t.mu.RLock()
-		var targets []*conn
-		for c := range t.conns[m.GetUid()] {
-			if m.GetEpoch() == 0 || c.epoch == m.GetEpoch() {
-				targets = append(targets, c)
-			}
-		}
+		c := t.conns[m.GetConn()]
 		t.mu.RUnlock()
-		for _, c := range targets {
-			switch b := m.GetBody().(type) {
-			case *backendv1.Downstream_Frame:
-				c.push(b.Frame)
-			case *backendv1.Downstream_CloseReason:
-				if f, err := kickFrame(b.CloseReason); err == nil {
-					c.push(f)
-				}
-				c.shut(b.CloseReason)
+		if c == nil {
+			continue // The socket left while this frame was in flight.
+		}
+		switch b := m.GetBody().(type) {
+		case *backendv1.Downstream_Frame:
+			c.push(b.Frame)
+		case *backendv1.Downstream_CloseReason:
+			if f, err := kickFrame(b.CloseReason); err == nil {
+				c.push(f)
 			}
+			c.shut(b.CloseReason)
 		}
 	}
 }

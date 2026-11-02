@@ -13,6 +13,7 @@ service GameBackend {
 message Upstream {
   int64 uid = 1;
   string key = 5;      // Scene key, on every frame: a uid may be in many scenes.
+  uint64 conn = 6;     // The sending socket, unique within this tunnel.
   oneof body {
     Attach attach = 2;
     bytes frame = 3;   // Serialized game.v1.Envelope from the client.
@@ -29,13 +30,11 @@ message Attach {
   uint32 channel = 6;   // Stamped onto every downstream Envelope.
 }
 
-message Detach {
-  uint64 epoch = 1;
-}
+message Detach {}
 
 message Downstream {
   int64 uid = 1;
-  uint64 epoch = 2;
+  uint64 conn = 2;         // The socket to reach; a uid may hold several.
   oneof body {
     bytes frame = 3;       // Serialized game.v1.Envelope for the client.
     string close_reason = 4;

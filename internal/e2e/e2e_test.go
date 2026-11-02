@@ -36,16 +36,22 @@ type stack struct {
 
 func startBackend(t *testing.T, f gamehost.Factory, grace time.Duration) string {
 	t.Helper()
+	addr, _ := startHost(t, gamehost.Config{Factory: f, Grace: grace, ReplayFrames: 8})
+	return addr
+}
+
+func startHost(t *testing.T, cfg gamehost.Config) (string, *gamehost.Host) {
+	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := gamehost.New(gamehost.Config{Factory: f, Grace: grace, ReplayFrames: 8})
+	host := gamehost.New(cfg)
 	srv := grpc.NewServer()
 	backendv1.RegisterGameBackendServer(srv, host)
 	go srv.Serve(lis) //nolint:errcheck // Stops with the test.
 	t.Cleanup(func() { srv.Stop(); host.Stop() })
-	return lis.Addr().String()
+	return lis.Addr().String(), host
 }
 
 func newStack(t *testing.T, nodes map[string][]string) *stack {
@@ -278,11 +284,9 @@ func TestStaleTokenCannotConnect(t *testing.T) {
 }
 
 func TestOneConnectionReachesTwoServices(t *testing.T) {
-	sched, store, ids := worldDeps(t)
-	w := slg.New(slg.Config{Store: store, Scheduler: sched, IDs: ids, Speed: 1000})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go sched.Run(ctx) //nolint:errcheck // Ends with the test.
+	timers, store, ids := worldDeps(t)
+	w := slg.New(slg.Config{Store: store, Timers: timers, IDs: ids, Speed: 1000})
+	timers.Start(context.Background(), discovery.Slot("k1"))
 
 	s := newStack(t, map[string][]string{
 		"room":  {startBackend(t, room.Factory, time.Minute)},
@@ -310,44 +314,46 @@ func TestOneConnectionReachesTwoServices(t *testing.T) {
 	}
 }
 
-func worldDeps(t *testing.T) (*timer.Scheduler, *slg.MemoryStore, *idgen.Generator) {
+func worldDeps(t *testing.T) (*timer.Group, *slg.MemoryStore, *idgen.Generator) {
 	t.Helper()
 	ids, err := idgen.New(1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sched := timer.New(timer.Config{Owner: "t", Store: timer.NewMemStore(), Poll: 10 * time.Millisecond})
-	return sched, slg.NewMemoryStore(), ids
+	jobs := timer.NewMemStore()
+	timers := timer.NewGroup(timer.Config{Owner: "t", Store: jobs, Poll: 10 * time.Millisecond})
+	t.Cleanup(timers.StopAll)
+	return timers, slg.NewMemoryStore(jobs), ids
 }
 
 func TestMarchSurvivesWorldRestart(t *testing.T) {
 	store := timer.NewMemStore()
-	marches := slg.NewMemoryStore()
+	marches := slg.NewMemoryStore(store)
+	slot := discovery.Slot("k1")
 	ids, err := idgen.New(1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// First process: accept a march, then die before it arrives.
-	first := timer.New(timer.Config{Owner: "a", Store: store})
-	w1 := slg.New(slg.Config{Store: marches, Scheduler: first, IDs: ids, Speed: 100})
+	first := timer.NewGroup(timer.Config{Owner: "a", Store: store})
+	w1 := slg.New(slg.Config{Store: marches, Timers: first, IDs: ids, Speed: 100})
 	s := newStack(t, map[string][]string{"world": {startBackend(t, w1.Factory, time.Minute)}})
 	c := s.dial(t, s.login(t, 1), &gamev1.Binding{Service: "world", Key: "k1"})
 	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
 	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1},
 		&gamev1.MarchReq{ToX: 5, ToY: 5, Troops: 1})
 	c.until(gamev1.MsgId_MSG_ID_MARCH_RSP)
-	if store.Len(0) != 1 {
-		t.Fatalf("stored jobs %d", store.Len(0))
+	if store.Len(slot) != 1 {
+		t.Fatalf("stored jobs %d", store.Len(slot))
 	}
 
 	// Second process: picks the job up from storage and completes it.
-	second := timer.New(timer.Config{Owner: "b", Store: store, Poll: 10 * time.Millisecond})
-	w2 := slg.New(slg.Config{Store: marches, Scheduler: second, IDs: ids})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go second.Run(ctx) //nolint:errcheck // Ends with the test.
+	second := timer.NewGroup(timer.Config{Owner: "b", Store: store, Poll: 10 * time.Millisecond})
+	w2 := slg.New(slg.Config{Store: marches, Timers: second, IDs: ids})
+	second.Start(context.Background(), slot)
+	defer second.StopAll()
 	deadline := time.Now().Add(3 * time.Second)
-	for store.Len(0) != 0 {
+	for store.Len(slot) != 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("march never completed after restart")
 		}
@@ -504,6 +510,74 @@ func TestReplacedSocketCannotDetachItsSuccessor(t *testing.T) {
 	time.Sleep(100 * time.Millisecond) // Let its detach reach the host.
 	action(fresh, 1, 1)
 	fresh.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+}
+
+func closes(t *testing.T, c *client) {
+	t.Helper()
+	for {
+		env, err := c.tryRead(2 * time.Second)
+		if err != nil {
+			return
+		}
+		if env.GetMsgId() == uint32(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT) {
+			t.Fatal("received a snapshot from a node that must refuse")
+		}
+	}
+}
+
+func TestNodeRefusesSceneItDoesNotOwn(t *testing.T) {
+	addr, host := startHost(t, gamehost.Config{Factory: room.Factory,
+		Owns: func(string) bool { return false }})
+	s := newStack(t, map[string][]string{"room": {addr}})
+	closes(t, s.dial(t, s.login(t, 1), roomBinding(0)))
+	if !host.Empty(func(string) bool { return true }) {
+		t.Fatal("a refused attach must not start a scene")
+	}
+}
+
+func TestEvictClosesPlayersAndStopsScene(t *testing.T) {
+	addr, host := startHost(t, gamehost.Config{Factory: room.Factory})
+	s := newStack(t, map[string][]string{"room": {addr}})
+	c := s.dial(t, s.login(t, 1), roomBinding(0))
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+
+	all := func(string) bool { return true }
+	host.Evict(all)
+	if !host.Empty(all) {
+		t.Fatal("scene still running after Evict")
+	}
+	c.until(gamev1.MsgId_MSG_ID_KICK)
+	closes(t, c)
+}
+
+func TestLastPlayerLeavingRetiresScene(t *testing.T) {
+	addr, host := startHost(t, gamehost.Config{Factory: room.Factory, Grace: 20 * time.Millisecond})
+	s := newStack(t, map[string][]string{"room": {addr}})
+	tok := s.login(t, 1)
+	c := s.dial(t, tok, roomBinding(0))
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	action(c, 1, 5)
+	c.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+	if err := c.ws.CloseNow(); err != nil {
+		t.Fatal(err)
+	}
+
+	all := func(string) bool { return true }
+	deadline := time.Now().Add(3 * time.Second)
+	for !host.Empty(all) {
+		if time.Now().After(deadline) {
+			t.Fatal("empty scene was never retired")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c2 := s.dial(t, tok, roomBinding(0))
+	snap := &gamev1.RoomSnapshot{}
+	if err := proto.Unmarshal(c2.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT).GetPayload(), snap); err != nil {
+		t.Fatal(err)
+	}
+	if snap.GetValue() != 0 {
+		t.Fatalf("a new scene must start clean, got value %d", snap.GetValue())
+	}
 }
 
 func TestChannelForWrongServiceClosesConnection(t *testing.T) {

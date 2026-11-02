@@ -5,20 +5,33 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/yourname/gameserver/pkg/timer"
 )
 
-// MySQLStore persists marches. The kingdom's database holds them all.
+// MySQLStore persists marches. The kingdom's database holds them all, and it
+// must also hold timer_job.
 type MySQLStore struct {
 	DB *sql.DB
 }
 
 // Create implements Store.
-func (s *MySQLStore) Create(ctx context.Context, m March) error {
-	_, err := s.DB.ExecContext(ctx,
+func (s *MySQLStore) Create(ctx context.Context, m March, arrive timer.Job) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // No-op after Commit.
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO slg_march (id, kingdom, uid, from_x, from_y, to_x, to_y, troops, arrive_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.Kingdom, m.UID, m.FromX, m.FromY, m.ToX, m.ToY, m.Troops, m.ArriveAt.UTC())
-	return err
+		m.ID, m.Kingdom, m.UID, m.FromX, m.FromY, m.ToX, m.ToY, m.Troops, m.ArriveAt.UTC()); err != nil {
+		return err
+	}
+	if err := timer.AddTx(ctx, tx, arrive); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Troops implements Store.

@@ -111,14 +111,18 @@ func (s *Scheduler) Schedule(ctx context.Context, j Job) error {
 		return fmt.Errorf("timer: add job %d: %w", j.ID, err)
 	}
 	if j.FireAt.Sub(s.cfg.Now()) <= s.cfg.Lookahead {
-		// Arming happens on Run's goroutine, under Run's context. The caller's
-		// ctx is often a request that ends long before the job fires.
-		select {
-		case s.wake <- struct{}{}:
-		default:
-		}
+		s.Wake()
 	}
 	return nil
+}
+
+// Wake makes Run scan now. Arming happens on Run's goroutine, under Run's
+// context: a caller's ctx is often a request that ends before the job fires.
+func (s *Scheduler) Wake() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
 }
 
 // Run claims the shard and fires jobs until ctx ends or the shard is lost.

@@ -68,6 +68,8 @@ type Config struct {
 	Grace        time.Duration // How long a seat is held. Default 45s.
 	ReplayFrames int           // Default 256.
 	MailboxSize  int           // Default 4096.
+	// Owns reports whether this node serves a key. Nil means every key.
+	Owns func(key string) bool
 }
 
 // Host implements the GameBackend gRPC service.
@@ -96,6 +98,7 @@ type sceneRun struct {
 	actor   *actor.Actor
 	scene   Scene
 	players map[int64]*Player // Actor-only.
+	retired bool              // Actor-only. Work still queued must not reseat anyone.
 	host    *Host
 }
 
@@ -111,6 +114,77 @@ func (h *Host) sceneFor(key string) *sceneRun {
 	s.scene = h.cfg.Factory(key, &SceneContext{Actor: s.actor, scene: s})
 	h.scenes[key] = s
 	return s
+}
+
+// existing returns the running scene for key, or nil.
+func (h *Host) existing(key string) *sceneRun {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.scenes[key]
+}
+
+// retire ends a scene from its own actor, which cannot wait for itself.
+func (h *Host) retire(s *sceneRun) {
+	s.retired = true
+	h.mu.Lock()
+	if h.scenes[s.key] == s {
+		delete(h.scenes, s.key)
+	}
+	h.mu.Unlock()
+	go s.actor.Stop()
+}
+
+// Empty reports that no scene with a matching key is running.
+func (h *Host) Empty(match func(key string) bool) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for key := range h.scenes {
+		if match(key) {
+			return false
+		}
+	}
+	return true
+}
+
+// Evict ends matching scenes and closes their players' sockets, so that they
+// reconnect to the new owner. It returns once the scenes have stopped.
+func (h *Host) Evict(match func(key string) bool) {
+	h.mu.Lock()
+	var scenes []*sceneRun
+	for key, s := range h.scenes {
+		if match(key) {
+			scenes = append(scenes, s)
+			delete(h.scenes, key)
+		}
+	}
+	h.mu.Unlock()
+	for _, s := range scenes {
+		s := s
+		evict := func() {
+			if s.retired {
+				return
+			}
+			s.retired = true
+			for _, p := range s.players {
+				if p.tun != nil {
+					p.tun.send(moved(p.UID, p.conn))
+					p.tun.untrack(s, p.UID)
+					p.tun = nil
+				}
+				s.scene.OnExpire(p)
+			}
+		}
+		err := s.actor.Tell(evict)
+		s.actor.Stop()
+		if err != nil {
+			evict() // The mailbox was full. The actor has stopped, so this is safe.
+		}
+	}
+}
+
+func moved(uid int64, conn uint64) *backendv1.Downstream {
+	return &backendv1.Downstream{Uid: uid, Conn: conn,
+		Body: &backendv1.Downstream_CloseReason{CloseReason: "scene moved"}}
 }
 
 // Stop stops every scene.
@@ -233,6 +307,7 @@ type tunnel struct {
 	cancel context.CancelFunc
 
 	mu     sync.Mutex
+	gone   bool
 	scenes map[*sceneRun]map[int64]struct{}
 }
 
@@ -247,9 +322,15 @@ func (t *tunnel) send(m *backendv1.Downstream) {
 	}
 }
 
-func (t *tunnel) track(s *sceneRun, uid int64) {
+// track records a seat on this tunnel, for cleanup when it dies. It returns
+// false if it already has. Tracking runs on the scene's actor, so it is ordered
+// with the detach of any earlier socket.
+func (t *tunnel) track(s *sceneRun, uid int64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.gone {
+		return false
+	}
 	if t.scenes == nil {
 		t.scenes = map[*sceneRun]map[int64]struct{}{}
 	}
@@ -257,6 +338,16 @@ func (t *tunnel) track(s *sceneRun, uid int64) {
 		t.scenes[s] = map[int64]struct{}{}
 	}
 	t.scenes[s][uid] = struct{}{}
+	return true
+}
+
+func (t *tunnel) untrack(s *sceneRun, uid int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.scenes[s], uid)
+	if len(t.scenes[s]) == 0 {
+		delete(t.scenes, s)
+	}
 }
 
 // tunnelGone detaches everyone on a dead tunnel, starting their grace period.
@@ -264,6 +355,7 @@ func (h *Host) tunnelGone(t *tunnel) {
 	t.mu.Lock()
 	scenes := t.scenes
 	t.scenes = nil
+	t.gone = true
 	t.mu.Unlock()
 	for s, uids := range scenes {
 		s := s
@@ -281,16 +373,28 @@ func (h *Host) tunnelGone(t *tunnel) {
 }
 
 func (h *Host) dispatch(t *tunnel, m *backendv1.Upstream) {
-	s := h.sceneFor(m.GetKey())
 	uid, conn := m.GetUid(), m.GetConn()
 	var err error
 	switch b := m.GetBody().(type) {
 	case *backendv1.Upstream_Attach:
-		t.track(s, uid)
+		if h.cfg.Owns != nil && !h.cfg.Owns(m.GetKey()) {
+			t.send(moved(uid, conn)) // The gateway's table is stale.
+			return
+		}
+		s := h.sceneFor(m.GetKey())
 		err = s.actor.Tell(func() { s.attach(t, uid, conn, b.Attach) })
 	case *backendv1.Upstream_Frame:
+		s := h.existing(m.GetKey())
+		if s == nil {
+			t.send(moved(uid, conn))
+			return
+		}
 		err = s.actor.Tell(func() { s.frame(t, uid, conn, b.Frame) })
 	case *backendv1.Upstream_Detach:
+		s := h.existing(m.GetKey())
+		if s == nil {
+			return
+		}
 		err = s.actor.Tell(func() {
 			// A replaced socket may detach after its successor has attached.
 			if p := s.players[uid]; p != nil && p.tun == t && p.conn == conn {
@@ -305,11 +409,18 @@ func (h *Host) dispatch(t *tunnel, m *backendv1.Upstream) {
 }
 
 func (s *sceneRun) attach(t *tunnel, uid int64, conn uint64, a *backendv1.Attach) {
+	if s.retired {
+		t.send(moved(uid, conn))
+		return
+	}
 	p, known := s.players[uid]
 	if known && a.GetEpoch() < p.epoch {
 		t.send(&backendv1.Downstream{Uid: uid, Conn: conn,
 			Body: &backendv1.Downstream_CloseReason{CloseReason: "stale login"}})
 		return
+	}
+	if !t.track(s, uid) {
+		return // The gateway went away while this was queued.
 	}
 	if !known {
 		p = &Player{UID: uid, sess: resume.New(s.host.cfg.ReplayFrames)}
@@ -325,6 +436,9 @@ func (s *sceneRun) attach(t *tunnel, uid int64, conn uint64, a *backendv1.Attach
 		}
 		p.tun.send(&backendv1.Downstream{Uid: uid, Conn: p.conn,
 			Body: &backendv1.Downstream_CloseReason{CloseReason: reason}})
+		if p.tun != t {
+			p.tun.untrack(s, uid)
+		}
 	}
 	p.tun, p.conn, p.epoch, p.channel = t, conn, a.GetEpoch(), a.GetChannel()
 	p.offGen++ // Cancels any pending grace expiry.
@@ -416,6 +530,7 @@ func (p *Player) reply(req *gamev1.Envelope, r Reply, clientSeq uint64) {
 }
 
 func (s *sceneRun) disconnect(p *Player) {
+	p.tun.untrack(s, p.UID)
 	p.tun = nil
 	p.offGen++
 	gen := p.offGen
@@ -424,6 +539,9 @@ func (s *sceneRun) disconnect(p *Player) {
 		if p.offGen == gen && !p.Online() && s.players[p.UID] == p {
 			s.scene.OnExpire(p)
 			delete(s.players, p.UID)
+			if len(s.players) == 0 {
+				s.host.retire(s)
+			}
 		}
 	})
 }

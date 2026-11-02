@@ -43,6 +43,28 @@ socket cannot act or detach its successor. The replaced socket is closed.
 Clients must reconnect with exponential backoff and jitter. `Gateway.Drain` spreads
 disconnects over a window, so a rolling deploy does not synchronize them.
 
+## Scene ownership
+
+A scene key hashes to one of 256 slots, a permanent number. Nodes own slots rather than
+scenes, so etcd traffic does not grow with the number of rooms. Timer shards are the same
+slots, so a kingdom's timers run on the node hosting it.
+
+- A node registers under a lease and works out which slots rendezvous hashing gives it.
+  It claims a free slot with an etcd transaction, so a slot has one key and one owner.
+- Dead node: its lease expires, so its slots free up and their new owners claim them.
+  Clients reconnect and find the new owner. This takes up to one TTL (10s by default).
+- New node: an existing owner gives up a slot once the slot is idle, or after `MaxDrain`
+  (10 minutes). Live rooms are not moved unless that wait runs out.
+- Partition: a node that loses etcd sees its lease end, stops serving and exits. Timers
+  are also fenced by token, so a stale owner cannot complete jobs.
+- Gateways poll the slot table. A stale answer is safe: a node refuses scenes it does not
+  own, and the client reconnects.
+
+A scene ends when its last player's grace period ends. Scene memory is therefore not
+durable: anything that must outlive it belongs in a store.
+
+Without etcd, `discovery.Static` works, but each stateful service must run as one node.
+
 ## SLG
 
 SLG differs from a room game in three ways: the world runs with nobody connected,
@@ -82,12 +104,8 @@ Timer fires -> conditional state change (exactly once) -> notify if online
 - A shard has one owner. `Claim` issues a fencing token, and a stale owner's writes fail,
   which stops a paused node from deleting work its successor owns.
 - After downtime, overdue jobs fire immediately on the first scan.
-- Each kingdom's shard must be scheduled where that kingdom is hosted. Assigning shards
-  to nodes automatically requires the etcd work listed below.
-
-The world sample writes the march and its timer as two statements. If the process dies
-between them, a march exists with no timer. Production code should use one transaction,
-or a sweeper that re-creates timers for marching rows.
+- A march and its timer commit in one transaction, so a march cannot exist without a
+  timer. This requires `timer_job` to be in the same database as the state it completes.
 
 ### Cross-service flow: an attack
 
@@ -118,9 +136,10 @@ load tested.
 
 ## Known gaps
 
-- `discovery.Static` only: no etcd, no node health, no automatic failover.
-- Node failure loses in-memory scene state. Rooms need a checkpoint strategy per game.
-- Room ownership has no lease yet, so two nodes could host one key during a topology change.
+- Node failure, or `MaxDrain` running out, loses in-memory scene state. Rooms need a
+  checkpoint strategy per game.
+- During a partition two nodes can host one scene for up to one lease TTL. Durable state
+  is protected by guarded writes; a room's in-memory state on the losing node is discarded.
 - No metrics, tracing, GM tools, or config hot reload yet.
 - Rate limits exist per connection only, not per IP or per account.
 - Gateway-to-backend gRPC is plaintext; use mTLS or a private network.

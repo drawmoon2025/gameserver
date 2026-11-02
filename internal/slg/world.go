@@ -21,6 +21,7 @@ import (
 	gamev1 "github.com/yourname/gameserver/gen/game/v1"
 	"github.com/yourname/gameserver/internal/gamehost"
 	"github.com/yourname/gameserver/pkg/actor"
+	"github.com/yourname/gameserver/pkg/discovery"
 	"github.com/yourname/gameserver/pkg/idgen"
 	"github.com/yourname/gameserver/pkg/timer"
 )
@@ -43,8 +44,9 @@ type March struct {
 
 // Store persists marches.
 type Store interface {
-	// Create stores a march in the marching state.
-	Create(ctx context.Context, m March) error
+	// Create stores a march in the marching state together with the timer that
+	// ends it. They commit as one: a march without a timer would never arrive.
+	Create(ctx context.Context, m March, arrive timer.Job) error
 	// Arrive moves a marching march to arrived. It returns false if it was
 	// already arrived, which is what makes a re-fired timer harmless.
 	Arrive(ctx context.Context, id uint64) (March, bool, error)
@@ -54,20 +56,24 @@ type Store interface {
 
 // MemoryStore is an in-process Store.
 type MemoryStore struct {
+	timers  timer.Store
 	mu      sync.Mutex
 	marches map[uint64]March
 	arrived map[uint64]bool
 }
 
-// NewMemoryStore creates an empty store.
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{marches: map[uint64]March{}, arrived: map[uint64]bool{}}
+// NewMemoryStore creates an empty store that writes jobs to timers.
+func NewMemoryStore(timers timer.Store) *MemoryStore {
+	return &MemoryStore{timers: timers, marches: map[uint64]March{}, arrived: map[uint64]bool{}}
 }
 
 // Create implements Store.
-func (s *MemoryStore) Create(_ context.Context, m March) error {
+func (s *MemoryStore) Create(ctx context.Context, m March, arrive timer.Job) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.timers.Add(ctx, arrive); err != nil {
+		return err
+	}
 	s.marches[m.ID] = m
 	return nil
 }
@@ -102,15 +108,15 @@ func (s *MemoryStore) Troops(_ context.Context, kingdom string, uid int64) (int6
 
 // Config wires the world service.
 type Config struct {
-	Store     Store
-	Scheduler *timer.Scheduler
-	IDs       *idgen.Generator
-	Speed     float64 // Map tiles per second. Default 1.
-	Now       func() time.Time
+	Store  Store
+	Timers *timer.Group
+	IDs    *idgen.Generator
+	Speed  float64 // Map tiles per second. Default 1.
+	Now    func() time.Time
 }
 
-// World creates kingdom scenes and registers the timer handler. One process
-// serves one timer shard, and that shard's kingdoms.
+// World creates kingdom scenes and registers the timer handler. A kingdom's
+// timer shard is its cluster slot, so timers run on the node hosting it.
 type World struct {
 	cfg Config
 
@@ -127,7 +133,7 @@ func New(cfg Config) *World {
 		cfg.Now = time.Now
 	}
 	w := &World{cfg: cfg, scenes: map[string]*Kingdom{}}
-	cfg.Scheduler.Handle(KindMarchArrive, w.onArrive)
+	cfg.Timers.Handle(KindMarchArrive, w.onArrive)
 	return w
 }
 
@@ -227,16 +233,13 @@ func (k *Kingdom) OnMessage(p *gamehost.Player, env *gamev1.Envelope) gamehost.R
 	// marches is low; a busy kingdom should batch these writes.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := w.cfg.Store.Create(ctx, m); err != nil {
+	job := timer.Job{ID: m.ID, Shard: discovery.Slot(k.key), Kind: KindMarchArrive,
+		Payload: binary.BigEndian.AppendUint64(nil, m.ID), FireAt: m.ArriveAt}
+	if err := w.cfg.Store.Create(ctx, m, job); err != nil {
 		slog.Error("create march", "err", err)
 		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_INTERNAL}
 	}
-	payload := binary.BigEndian.AppendUint64(nil, m.ID)
-	if err := w.cfg.Scheduler.Schedule(ctx, timer.Job{ID: m.ID, Kind: KindMarchArrive,
-		Payload: payload, FireAt: m.ArriveAt}); err != nil {
-		slog.Error("schedule march", "err", err)
-		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_INTERNAL}
-	}
+	w.cfg.Timers.Wake(job.Shard)
 	return gamehost.Reply{MsgID: gamev1.MsgId_MSG_ID_MARCH_RSP,
 		Msg: &gamev1.MarchRsp{MarchId: m.ID, ArriveAtMs: m.ArriveAt.UnixMilli()}}
 }

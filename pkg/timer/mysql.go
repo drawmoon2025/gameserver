@@ -36,9 +36,18 @@ func (m *MySQLStore) Claim(ctx context.Context, shard int, owner string) (uint64
 
 // Add implements Store. Re-adding an ID keeps the first copy.
 func (m *MySQLStore) Add(ctx context.Context, j Job) error {
-	_, err := m.DB.ExecContext(ctx,
-		`INSERT IGNORE INTO timer_job (id, shard, kind, payload, fire_at, attempt) VALUES (?, ?, ?, ?, ?, ?)`,
-		j.ID, j.Shard, j.Kind, j.Payload, j.FireAt.UTC(), j.Attempt)
+	_, err := m.DB.ExecContext(ctx, insertJob, j.ID, j.Shard, j.Kind, j.Payload, j.FireAt.UTC(), j.Attempt)
+	return err
+}
+
+const insertJob = `INSERT IGNORE INTO timer_job (id, shard, kind, payload, fire_at, attempt) VALUES (?, ?, ?, ?, ?, ?)`
+
+// AddTx stores a job in the caller's transaction, so that a state change and
+// the timer that completes it commit together. The job's Shard must be set, and
+// the tables must share a database. Unlike Add, a duplicate ID is an error: a
+// transaction must not commit believing it stored a timer that it did not.
+func AddTx(ctx context.Context, tx *sql.Tx, j Job) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO timer_job (id, shard, kind, payload, fire_at, attempt) VALUES (?, ?, ?, ?, ?, ?)`, j.ID, j.Shard, j.Kind, j.Payload, j.FireAt.UTC(), j.Attempt)
 	return err
 }
 

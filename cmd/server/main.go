@@ -4,6 +4,8 @@
 //
 // With no MYSQL_DSNS and REDIS_ADDR it uses in-memory stores. That is for local
 // development only: state dies with the process and nothing is shared.
+//
+// With no ETCD_ENDPOINTS each stateful service must run as one node.
 package main
 
 import (
@@ -18,11 +20,13 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 
 	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
@@ -33,6 +37,7 @@ import (
 	"github.com/yourname/gameserver/internal/slg"
 	"github.com/yourname/gameserver/internal/slots"
 	"github.com/yourname/gameserver/pkg/auth"
+	"github.com/yourname/gameserver/pkg/cluster"
 	"github.com/yourname/gameserver/pkg/discovery"
 	"github.com/yourname/gameserver/pkg/events"
 	"github.com/yourname/gameserver/pkg/idgen"
@@ -59,6 +64,7 @@ type deps struct {
 	timers   timer.Store
 	marches  slg.Store
 	outboxes []events.Store
+	etcd     *clientv3.Client // Nil means a single node per stateful service.
 }
 
 func build() (*deps, error) {
@@ -83,20 +89,36 @@ func build() (*deps, error) {
 		d.epochs = session.NewMemory()
 	}
 
+	if eps := os.Getenv("ETCD_ENDPOINTS"); eps != "" {
+		c, err := clientv3.New(clientv3.Config{Endpoints: strings.Split(eps, ","), DialTimeout: 5 * time.Second})
+		if err != nil {
+			return nil, fmt.Errorf("etcd: %w", err)
+		}
+		d.etcd = c
+	} else {
+		slog.Warn("ETCD_ENDPOINTS unset: stateful services must run as one node each")
+	}
+
 	dsns := os.Getenv("MYSQL_DSNS") // Comma-separated, one per physical shard.
 	if dsns == "" {
 		slog.Warn("MYSQL_DSNS unset: using in-memory stores")
 		outbox := &events.MemoryStore{}
+		timers := timer.NewMemStore()
 		d.accounts = auth.NewMemoryAccounts()
 		d.wallet = wallet.NewMemory(outbox)
-		d.timers = timer.NewMemStore()
-		d.marches = slg.NewMemoryStore()
+		d.timers = timers
+		d.marches = slg.NewMemoryStore(timers)
 		d.outboxes = []events.Store{outbox}
 		return d, nil
 	}
 	var dbs []*sql.DB
 	for _, dsn := range strings.Split(dsns, ",") {
-		db, err := sql.Open("mysql", dsn)
+		cfg, err := mysql.ParseDSN(dsn)
+		if err != nil {
+			return nil, err
+		}
+		cfg.ParseTime = true // Timer and march rows scan into time.Time.
+		db, err := sql.Open("mysql", cfg.FormatDSN())
 		if err != nil {
 			return nil, err
 		}
@@ -137,12 +159,63 @@ func serveHTTP(ctx context.Context, name, addr string, h http.Handler) {
 	}()
 }
 
-func serveGame(ctx context.Context, name, addr string, f gamehost.Factory) (*gamehost.Host, error) {
+// slotHooks are what a game node does as it gains and loses slots.
+type slotHooks struct {
+	acquired func(slot int)
+	released func(slot int)
+}
+
+func inSlot(slot int) func(key string) bool {
+	return func(key string) bool { return discovery.Slot(key) == slot }
+}
+
+// runGame starts a game node. In a cluster it takes slots as etcd assigns them;
+// alone, it owns them all. Any failure to stay in the cluster ends the process,
+// since a node that has lost its slots must not keep serving.
+func runGame(ctx context.Context, stop func(), wg *sync.WaitGroup, d *deps, name, addr string, f gamehost.Factory, hooks slotHooks) error {
+	if d.etcd == nil {
+		if _, err := serveGame(ctx, name, addr, f, nil); err != nil {
+			return err
+		}
+		for slot := range discovery.Slots {
+			hooks.acquired(slot)
+		}
+		return nil
+	}
+	advertise := os.Getenv(strings.ToUpper(name) + "_ADVERTISE")
+	if advertise == "" {
+		return fmt.Errorf("%s_ADVERTISE is required with ETCD_ENDPOINTS", strings.ToUpper(name))
+	}
+	var host *gamehost.Host
+	node := cluster.New(cluster.Config{Client: d.etcd, Service: name, NodeID: env("POD_NAME", "node-0"), Addr: advertise,
+		Idle:     func(slot int) bool { return host.Empty(inSlot(slot)) },
+		Acquired: hooks.acquired,
+		Released: func(slot int) {
+			host.Evict(inSlot(slot))
+			hooks.released(slot)
+		},
+	})
+	host, err := serveGame(ctx, name, addr, f, node.Owns)
+	if err != nil {
+		return err
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := node.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("left cluster", "role", name, "err", err)
+			stop()
+		}
+	}()
+	return nil
+}
+
+func serveGame(ctx context.Context, name, addr string, f gamehost.Factory, owns func(string) bool) (*gamehost.Host, error) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	host := gamehost.New(gamehost.Config{Factory: f})
+	host := gamehost.New(gamehost.Config{Factory: f, Owns: owns})
 	srv := grpc.NewServer()
 	backendv1.RegisterGameBackendServer(srv, host)
 	go func() {
@@ -167,6 +240,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	var wg sync.WaitGroup
 	role := env("ROLE", "all")
 	on := func(r string) bool { return role == "all" || role == r }
 
@@ -192,28 +266,35 @@ func run() error {
 		}
 	}
 	if on("room") {
-		if _, err := serveGame(ctx, "room", env("ROOM_ADDR", ":9001"), room.Factory); err != nil {
+		noop := func(int) {}
+		if err := runGame(ctx, stop, &wg, d, "room", env("ROOM_ADDR", ":9001"), room.Factory,
+			slotHooks{acquired: noop, released: noop}); err != nil {
 			return err
 		}
 	}
 	if on("world") {
-		sched := timer.New(timer.Config{Owner: env("POD_NAME", "world-0"), Shard: 0, Store: d.timers})
-		w := slg.New(slg.Config{Store: d.marches, Scheduler: sched, IDs: d.ids})
-		if _, err := serveGame(ctx, "world", env("WORLD_ADDR", ":9002"), w.Factory); err != nil {
+		timers := timer.NewGroup(timer.Config{Owner: env("POD_NAME", "world-0"), Store: d.timers})
+		w := slg.New(slg.Config{Store: d.marches, Timers: timers, IDs: d.ids})
+		if err := runGame(ctx, stop, &wg, d, "world", env("WORLD_ADDR", ":9002"), w.Factory, slotHooks{
+			acquired: func(slot int) { timers.Start(ctx, slot) },
+			released: timers.Stop,
+		}); err != nil {
 			return err
 		}
-		go func() {
-			if err := sched.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				slog.Error("timer scheduler stopped", "err", err)
-				stop() // A fenced node must not keep serving this shard.
-			}
-		}()
 	}
 	if on("gateway") {
-		g := gateway.New(gateway.Config{Signer: d.signer, Epochs: d.epochs, Resolver: discovery.NewStatic(map[string][]string{
-			"room":  strings.Split(env("ROOM_NODES", "127.0.0.1:9001"), ","),
-			"world": strings.Split(env("WORLD_NODES", "127.0.0.1:9002"), ","),
-		})})
+		var resolver discovery.Resolver
+		if d.etcd != nil {
+			r := cluster.NewResolver(d.etcd, "", 0, "room", "world")
+			go r.Run(ctx)
+			resolver = r
+		} else {
+			resolver = discovery.NewStatic(map[string][]string{
+				"room":  strings.Split(env("ROOM_NODES", "127.0.0.1:9001"), ","),
+				"world": strings.Split(env("WORLD_NODES", "127.0.0.1:9002"), ","),
+			})
+		}
+		g := gateway.New(gateway.Config{Signer: d.signer, Epochs: d.epochs, Resolver: resolver})
 		mux := http.NewServeMux()
 		mux.Handle("GET /ws", g)
 		serveHTTP(ctx, "gateway", env("GATEWAY_ADDR", ":8080"), mux)
@@ -225,6 +306,16 @@ func run() error {
 	<-ctx.Done()
 	slog.Info("shutting down")
 	time.Sleep(2 * time.Second) // Lets the shutdown goroutines finish.
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done: // Slots were handed back.
+	case <-time.After(15 * time.Second):
+		slog.Warn("shutdown timed out; leases will expire instead")
+	}
 	return nil
 }
 

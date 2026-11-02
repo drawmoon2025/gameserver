@@ -3,7 +3,7 @@
 Go game server framework: WebSocket room and SLG games, HTTP slots, Protobuf,
 Redis, MySQL and optional Kafka.
 
-**Status: early.** Tests use in-memory stores; nothing has been load tested.
+**Status: early.** Nothing has been load tested.
 
 Design and known gaps: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -22,9 +22,15 @@ bash scripts/verify.sh                                        # Linux/macOS
 
 In China, first run `go env -w GOPROXY=https://goproxy.cn,direct`.
 
-The script generates `gen/`, then builds, vets and tests. Tests use in-memory
-stores and need no Docker, so the MySQL and Kafka code is compiled but not
-exercised.
+The script generates `gen/`, then builds, vets and tests on in-memory stores, so
+it needs no Docker. To test against real MySQL, Redis, etcd and Kafka:
+
+```bash
+docker compose -f deploy/docker-compose.yml --profile kafka up -d --wait
+go test -tags integration -p 1 ./...
+```
+
+CI runs both on every push.
 
 Dependency and protoc plugin versions are pinned and the script uses the installed
 Go (`GOTOOLCHAIN=local`). If `go.sum` is missing, the script creates it. Commit
@@ -54,4 +60,7 @@ and set those variables.
 | `KAFKA_ENABLED` | `false` | Forward the outbox to Kafka |
 | `KAFKA_BROKERS` | `localhost:9092` | Comma-separated |
 | `THIRD_PARTY_AUTH_URL` | unset | Enables the third-party provider |
-| `ROOM_NODES`, `WORLD_NODES` | `127.0.0.1:9001`, `:9002` | Game nodes, for gateways |
+| `ETCD_ENDPOINTS` | unset | Comma-separated. Enables clustering of `room` and `world` |
+| `ROOM_ADVERTISE`, `WORLD_ADVERTISE` | required with etcd | Address gateways dial |
+| `POD_NAME` | `node-0` | Node ID, unique within a service |
+| `ROOM_NODES`, `WORLD_NODES` | `127.0.0.1:9001`, `:9002` | Game nodes, without etcd |

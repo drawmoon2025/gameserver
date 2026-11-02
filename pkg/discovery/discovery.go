@@ -1,6 +1,6 @@
 // Package discovery resolves a service and scene key to the node that owns it.
-// Static is the only implementation today; an etcd-backed one is the same
-// interface plus a watch that updates the node list.
+// Static suits one node per stateful service. pkg/cluster provides the
+// etcd-backed Resolver for anything larger.
 package discovery
 
 import (
@@ -8,6 +8,17 @@ import (
 	"hash/fnv"
 	"sync"
 )
+
+// Slots is permanent: timer jobs are stored under their slot, so changing it
+// would strand them.
+const Slots = 256
+
+// Slot returns the slot a scene key belongs to.
+func Slot(key string) int {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(key))
+	return int(mix(h.Sum64()) % Slots)
+}
 
 // ErrNoNode means the service has no live node.
 var ErrNoNode = errors.New("discovery: no node for service")
@@ -38,23 +49,30 @@ func (s *Static) Set(service string, addrs []string) {
 func (s *Static) Resolve(service, key string) (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	var (
-		best  string
-		score uint64
-	)
-	for _, addr := range s.nodes[service] {
-		h := fnv.New64a()
-		_, _ = h.Write([]byte(addr))
-		_, _ = h.Write([]byte{0})
-		_, _ = h.Write([]byte(key))
-		if v := mix(h.Sum64()); best == "" || v > score {
-			best, score = addr, v
-		}
-	}
+	best := Pick(key, s.nodes[service])
 	if best == "" {
 		return "", ErrNoNode
 	}
 	return best, nil
+}
+
+// Pick chooses one of candidates for key by rendezvous hashing, or "" if there
+// are none. The answer does not depend on the order of candidates.
+func Pick(key string, candidates []string) string {
+	var (
+		best  string
+		score uint64
+	)
+	for _, c := range candidates {
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(c))
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(key))
+		if v := mix(h.Sum64()); best == "" || v > score {
+			best, score = c, v
+		}
+	}
+	return best
 }
 
 // mix is a finalizer: FNV alone distributes similar keys poorly.

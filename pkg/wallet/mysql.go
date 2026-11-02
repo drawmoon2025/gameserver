@@ -11,7 +11,11 @@ import (
 	"github.com/yourname/gameserver/pkg/shard"
 )
 
-const mysqlDuplicateEntry = 1062
+const (
+	mysqlDuplicateEntry = 1062
+	mysqlDeadlock       = 1213
+	deadlockRetries     = 3
+)
 
 // MySQL is the production Wallet. Schema: deploy/mysql/001_core.sql.
 //
@@ -25,12 +29,20 @@ type MySQL struct {
 // Apply implements Wallet.
 func (w *MySQL) Apply(ctx context.Context, c Change) (Receipt, error) {
 	db := w.Shards.For(c.UID)
-	r, err := apply(ctx, db, c)
-	var dup *mysql.MySQLError
-	if errors.As(err, &dup) && dup.Number == mysqlDuplicateEntry {
-		return replay(ctx, db, c)
+	for attempt := 0; ; attempt++ {
+		r, err := apply(ctx, db, c)
+		var me *mysql.MySQLError
+		switch {
+		case !errors.As(err, &me):
+			return r, err
+		case me.Number == mysqlDuplicateEntry:
+			return replay(ctx, db, c)
+		case me.Number == mysqlDeadlock && attempt < deadlockRetries:
+			// InnoDB rolled the transaction back, so nothing was applied.
+		default:
+			return r, err
+		}
 	}
-	return r, err
 }
 
 func apply(ctx context.Context, db *sql.DB, c Change) (Receipt, error) {
@@ -46,14 +58,24 @@ func apply(ctx context.Context, db *sql.DB, c Change) (Receipt, error) {
 	}
 	defer tx.Rollback() //nolint:errcheck // No-op after Commit.
 
-	if _, err := tx.ExecContext(ctx,
-		`INSERT IGNORE INTO wallet_account (uid, balance) VALUES (?, 0)`, c.UID); err != nil {
-		return Receipt{}, fmt.Errorf("wallet: ensure account: %w", err)
-	}
 	// Lock the row so the balance read below is the one this change produced.
 	var cur int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT balance FROM wallet_account WHERE uid = ? FOR UPDATE`, c.UID).Scan(&cur); err != nil {
+	err = tx.QueryRowContext(ctx,
+		`SELECT balance FROM wallet_account WHERE uid = ? FOR UPDATE`, c.UID).Scan(&cur)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Create the row outside this transaction and start over. Inserting
+		// here would hold a shared lock that concurrent changes to the same
+		// account then deadlock upgrading.
+		if err := tx.Rollback(); err != nil {
+			return Receipt{}, fmt.Errorf("wallet: rollback: %w", err)
+		}
+		if _, err := db.ExecContext(ctx,
+			`INSERT IGNORE INTO wallet_account (uid, balance) VALUES (?, 0)`, c.UID); err != nil {
+			return Receipt{}, fmt.Errorf("wallet: ensure account: %w", err)
+		}
+		return apply(ctx, db, c)
+	}
+	if err != nil {
 		return Receipt{}, fmt.Errorf("wallet: lock account: %w", err)
 	}
 	next := cur + c.Delta

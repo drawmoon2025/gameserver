@@ -48,7 +48,7 @@ func (g *Group) Start(ctx context.Context, shard int) {
 		defer close(run.done)
 		for ctx.Err() == nil {
 			cfg := g.cfg
-			cfg.Shard = shard
+			cfg.Shard = g.cfg.ShardBase + shard
 			s := New(cfg)
 			s.handlers = g.handlers
 			run.sched.Store(s)

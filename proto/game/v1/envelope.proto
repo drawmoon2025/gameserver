@@ -33,6 +33,16 @@ enum MsgId {
   MSG_ID_MARCH_REQ = 3001;
   MSG_ID_MARCH_RSP = 3002;
   MSG_ID_MARCH_ARRIVED = 3003;
+
+  MSG_ID_CITY_UPGRADE_REQ = 4001;
+  MSG_ID_CITY_UPGRADE_RSP = 4002;
+  MSG_ID_CITY_UPGRADED = 4003;
+  MSG_ID_CITY_SNAPSHOT = 4004;
+
+  MSG_ID_MAIL_CLAIM_REQ = 5001;
+  MSG_ID_MAIL_CLAIM_RSP = 5002;
+  MSG_ID_MAIL_NEW = 5003;
+  MSG_ID_MAIL_SNAPSHOT = 5004;
 }
 
 enum ErrorCode {
@@ -122,5 +132,64 @@ message MarchArrived {
   uint64 march_id = 1;
   int32 x = 2;
   int32 y = 3;
-  int64 troops = 4;
+  int64 troops = 4;  // Those left after any battle.
+}
+
+message Building {
+  string kind = 1;
+  int32 level = 2;
+}
+
+message CityUpgrade {
+  uint64 upgrade_id = 1;
+  string kind = 2;
+  int32 to_level = 3;
+  int64 finish_at_ms = 4;
+}
+
+message CitySnapshot {
+  int64 gold = 1;
+  repeated Building buildings = 2;
+  repeated CityUpgrade upgrades = 3;
+}
+
+message CityUpgradeReq {
+  string kind = 1;
+}
+
+message CityUpgradeRsp {
+  CityUpgrade upgrade = 1;
+  int64 gold = 2;
+}
+
+message CityUpgraded {
+  string kind = 1;
+  int32 level = 2;
+}
+
+message Mail {
+  uint64 mail_id = 1;
+  string kind = 2;
+  string title = 3;
+  string body = 4;
+  int64 reward_gold = 5;
+  bool claimed = 6;
+  int64 sent_at_ms = 7;
+}
+
+message MailSnapshot {
+  repeated Mail mail = 1;  // Newest first.
+}
+
+message MailNew {
+  Mail mail = 1;
+}
+
+message MailClaimReq {
+  uint64 mail_id = 1;
+}
+
+message MailClaimRsp {
+  uint64 mail_id = 1;
+  int64 gold = 2;
 }

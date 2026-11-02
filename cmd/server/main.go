@@ -1,6 +1,6 @@
 // Command server runs one role, or every role in one process for development.
 //
-//	ROLE=all|account|gateway|slots|room|world
+//	ROLE=all|account|gateway|slots|room|world|city|mail
 //
 // With no MYSQL_DSNS and REDIS_ADDR it uses in-memory stores. That is for local
 // development only: state dies with the process and nothing is shared.
@@ -32,8 +32,10 @@ import (
 
 	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
 	"github.com/yourname/gameserver/internal/account"
+	"github.com/yourname/gameserver/internal/city"
 	"github.com/yourname/gameserver/internal/gamehost"
 	"github.com/yourname/gameserver/internal/gateway"
+	"github.com/yourname/gameserver/internal/mail"
 	"github.com/yourname/gameserver/internal/room"
 	"github.com/yourname/gameserver/internal/slg"
 	"github.com/yourname/gameserver/internal/slots"
@@ -64,6 +66,8 @@ type deps struct {
 	wallet   wallet.Wallet
 	timers   timer.Store
 	marches  slg.Store
+	cities   city.Store
+	mails    mail.Store
 	outboxes []events.Store
 	etcd     *clientv3.Client // Nil means a single node per stateful service.
 }
@@ -101,6 +105,8 @@ func build() (*deps, error) {
 		d.wallet = wallet.NewMemory(outbox)
 		d.timers = timers
 		d.marches = slg.NewMemoryStore(timers)
+		d.cities = city.NewMemory(timers)
+		d.mails = mail.NewMemory(timers)
 		d.outboxes = []events.Store{outbox}
 		return d, nil
 	}
@@ -126,6 +132,8 @@ func build() (*deps, error) {
 	d.wallet = &wallet.MySQL{Shards: router}
 	d.timers = &timer.MySQLStore{DB: dbs[0]}
 	d.marches = &slg.MySQLStore{DB: dbs[0]}
+	d.cities = &city.MySQL{DB: dbs[0]}
+	d.mails = &mail.MySQL{DB: dbs[0]}
 	return d, nil
 }
 
@@ -300,26 +308,44 @@ func run() error {
 			return err
 		}
 	}
+	// Each service owns its slots separately, so each has its own timer group.
+	timed := func(name string, base int) (*timer.Group, slotHooks) {
+		g := timer.NewGroup(timer.Config{Owner: env("POD_NAME", "node-0") + "/" + name, Store: d.timers, ShardBase: base})
+		return g, slotHooks{acquired: func(slot int) { g.Start(ctx, slot) }, released: g.Stop}
+	}
 	if on("world") {
-		timers := timer.NewGroup(timer.Config{Owner: env("POD_NAME", "world-0"), Store: d.timers})
+		timers, hooks := timed("world", 0)
 		w := slg.New(slg.Config{Store: d.marches, Timers: timers, IDs: d.ids})
-		if err := runGame(ctx, stop, &wg, d, "world", env("WORLD_ADDR", ":9002"), w.Factory, slotHooks{
-			acquired: func(slot int) { timers.Start(ctx, slot) },
-			released: timers.Stop,
-		}); err != nil {
+		if err := runGame(ctx, stop, &wg, d, "world", env("WORLD_ADDR", ":9002"), w.Factory, hooks); err != nil {
+			return err
+		}
+	}
+	if on("city") {
+		timers, hooks := timed("city", city.ShardBase)
+		c := city.New(city.Config{Store: d.cities, Timers: timers, IDs: d.ids})
+		if err := runGame(ctx, stop, &wg, d, "city", env("CITY_ADDR", ":9003"), c.Factory, hooks); err != nil {
+			return err
+		}
+	}
+	if on("mail") {
+		timers, hooks := timed("mail", mail.ShardBase)
+		m := mail.New(mail.Config{Store: d.mails, Timers: timers, IDs: d.ids})
+		if err := runGame(ctx, stop, &wg, d, "mail", env("MAIL_ADDR", ":9004"), m.Factory, hooks); err != nil {
 			return err
 		}
 	}
 	if on("gateway") {
 		var resolver discovery.Resolver
 		if d.etcd != nil {
-			r := cluster.NewResolver(d.etcd, "", 0, "room", "world")
+			r := cluster.NewResolver(d.etcd, "", 0, "room", "world", "city", "mail")
 			go r.Run(ctx)
 			resolver = r
 		} else {
 			resolver = discovery.NewStatic(map[string][]string{
 				"room":  strings.Split(env("ROOM_NODES", "127.0.0.1:9001"), ","),
 				"world": strings.Split(env("WORLD_NODES", "127.0.0.1:9002"), ","),
+				"city":  strings.Split(env("CITY_NODES", "127.0.0.1:9003"), ","),
+				"mail":  strings.Split(env("MAIL_NODES", "127.0.0.1:9004"), ","),
 			})
 		}
 		g := gateway.New(gateway.Config{Signer: d.signer, Epochs: d.epochs, Resolver: resolver})

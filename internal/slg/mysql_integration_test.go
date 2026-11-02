@@ -45,6 +45,39 @@ func TestMySQLMarchAndTimerCommitTogether(t *testing.T) {
 	}
 }
 
+func TestMySQLBattleCommitsTileAndMailTogether(t *testing.T) {
+	ctx := context.Background()
+	db := itest.MySQL(t)
+	s := &MySQLStore{DB: db}
+	def, _ := marchFixture()
+	def.Troops = 10
+	atk, _ := marchFixture()
+	atk.Kingdom, atk.Troops = def.Kingdom, 1000
+	for _, m := range []March{def, atk} {
+		job := timer.Job{ID: m.ID, Shard: 999, Kind: KindMarchArrive, Payload: []byte("p"), FireAt: m.ArriveAt}
+		if _, err := s.Create(ctx, m, job); err != nil {
+			t.Fatal(err)
+		}
+		if _, applied, err := s.Arrive(ctx, m.ID); err != nil || !applied {
+			t.Fatalf("arrive %v: %v", applied, err)
+		}
+	}
+	if n, err := s.Troops(ctx, def.Kingdom, def.UID); err != nil || n != 0 {
+		t.Fatalf("defender holds %d: %v", n, err)
+	}
+	if n, err := s.Troops(ctx, atk.Kingdom, atk.UID); err != nil || n <= 0 {
+		t.Fatalf("attacker holds %d: %v", n, err)
+	}
+	var letters int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM timer_job WHERE kind = 'mail.deliver' AND payload LIKE ?`,
+		fmt.Sprintf(`%%battle:%d:%%`, atk.ID)).Scan(&letters); err != nil {
+		t.Fatal(err)
+	}
+	if letters != 2 {
+		t.Fatalf("%d letters for one battle", letters)
+	}
+}
+
 func TestMySQLRetriedRequestReturnsFirstMarch(t *testing.T) {
 	ctx := context.Background()
 	db := itest.MySQL(t)

@@ -52,7 +52,7 @@ and set those variables.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ROLE` | `all` | `all`, `account`, `gateway`, `slots`, `room` or `world` |
+| `ROLE` | `all` | `all`, `account`, `gateway`, `slots`, `room`, `world`, `city` or `mail` |
 | `JWT_KEY` | required | Signing key, 32+ bytes |
 | `NODE_ID` | `0`, or leased from etcd | Unique per process, 0-1023 |
 | `MYSQL_DSNS` | memory | Comma-separated, one per physical shard |
@@ -61,6 +61,6 @@ and set those variables.
 | `KAFKA_BROKERS` | `localhost:9092` | Comma-separated |
 | `THIRD_PARTY_AUTH_URL` | unset | Enables the third-party provider |
 | `ETCD_ENDPOINTS` | unset | Comma-separated. Enables clustering of `room` and `world` |
-| `ROOM_ADVERTISE`, `WORLD_ADVERTISE` | required with etcd | Address gateways dial |
+| `ROOM_ADVERTISE`, `WORLD_ADVERTISE`, `CITY_ADVERTISE`, `MAIL_ADVERTISE` | required with etcd | Address gateways dial |
 | `POD_NAME` | `node-0` | Node ID, unique within a service |
-| `ROOM_NODES`, `WORLD_NODES` | `127.0.0.1:9001`, `:9002` | Game nodes, without etcd |
+| `ROOM_NODES`, `WORLD_NODES`, `CITY_NODES`, `MAIL_NODES` | `127.0.0.1:9001` to `:9004` | Game nodes, without etcd |

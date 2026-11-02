@@ -24,19 +24,27 @@ const (
 type MsgId int32
 
 const (
-	MsgId_MSG_ID_UNSPECIFIED     MsgId = 0
-	MsgId_MSG_ID_HEARTBEAT       MsgId = 1
-	MsgId_MSG_ID_CONNECT_REQ     MsgId = 2
-	MsgId_MSG_ID_RESUME_RSP      MsgId = 3
-	MsgId_MSG_ID_KICK            MsgId = 4
-	MsgId_MSG_ID_ROOM_ACTION_REQ MsgId = 1001
-	MsgId_MSG_ID_ROOM_ACTION_RSP MsgId = 1002
-	MsgId_MSG_ID_ROOM_SNAPSHOT   MsgId = 1003
-	MsgId_MSG_ID_SPIN_REQ        MsgId = 2001
-	MsgId_MSG_ID_SPIN_RSP        MsgId = 2002
-	MsgId_MSG_ID_MARCH_REQ       MsgId = 3001
-	MsgId_MSG_ID_MARCH_RSP       MsgId = 3002
-	MsgId_MSG_ID_MARCH_ARRIVED   MsgId = 3003
+	MsgId_MSG_ID_UNSPECIFIED      MsgId = 0
+	MsgId_MSG_ID_HEARTBEAT        MsgId = 1
+	MsgId_MSG_ID_CONNECT_REQ      MsgId = 2
+	MsgId_MSG_ID_RESUME_RSP       MsgId = 3
+	MsgId_MSG_ID_KICK             MsgId = 4
+	MsgId_MSG_ID_ROOM_ACTION_REQ  MsgId = 1001
+	MsgId_MSG_ID_ROOM_ACTION_RSP  MsgId = 1002
+	MsgId_MSG_ID_ROOM_SNAPSHOT    MsgId = 1003
+	MsgId_MSG_ID_SPIN_REQ         MsgId = 2001
+	MsgId_MSG_ID_SPIN_RSP         MsgId = 2002
+	MsgId_MSG_ID_MARCH_REQ        MsgId = 3001
+	MsgId_MSG_ID_MARCH_RSP        MsgId = 3002
+	MsgId_MSG_ID_MARCH_ARRIVED    MsgId = 3003
+	MsgId_MSG_ID_CITY_UPGRADE_REQ MsgId = 4001
+	MsgId_MSG_ID_CITY_UPGRADE_RSP MsgId = 4002
+	MsgId_MSG_ID_CITY_UPGRADED    MsgId = 4003
+	MsgId_MSG_ID_CITY_SNAPSHOT    MsgId = 4004
+	MsgId_MSG_ID_MAIL_CLAIM_REQ   MsgId = 5001
+	MsgId_MSG_ID_MAIL_CLAIM_RSP   MsgId = 5002
+	MsgId_MSG_ID_MAIL_NEW         MsgId = 5003
+	MsgId_MSG_ID_MAIL_SNAPSHOT    MsgId = 5004
 )
 
 // Enum value maps for MsgId.
@@ -55,21 +63,37 @@ var (
 		3001: "MSG_ID_MARCH_REQ",
 		3002: "MSG_ID_MARCH_RSP",
 		3003: "MSG_ID_MARCH_ARRIVED",
+		4001: "MSG_ID_CITY_UPGRADE_REQ",
+		4002: "MSG_ID_CITY_UPGRADE_RSP",
+		4003: "MSG_ID_CITY_UPGRADED",
+		4004: "MSG_ID_CITY_SNAPSHOT",
+		5001: "MSG_ID_MAIL_CLAIM_REQ",
+		5002: "MSG_ID_MAIL_CLAIM_RSP",
+		5003: "MSG_ID_MAIL_NEW",
+		5004: "MSG_ID_MAIL_SNAPSHOT",
 	}
 	MsgId_value = map[string]int32{
-		"MSG_ID_UNSPECIFIED":     0,
-		"MSG_ID_HEARTBEAT":       1,
-		"MSG_ID_CONNECT_REQ":     2,
-		"MSG_ID_RESUME_RSP":      3,
-		"MSG_ID_KICK":            4,
-		"MSG_ID_ROOM_ACTION_REQ": 1001,
-		"MSG_ID_ROOM_ACTION_RSP": 1002,
-		"MSG_ID_ROOM_SNAPSHOT":   1003,
-		"MSG_ID_SPIN_REQ":        2001,
-		"MSG_ID_SPIN_RSP":        2002,
-		"MSG_ID_MARCH_REQ":       3001,
-		"MSG_ID_MARCH_RSP":       3002,
-		"MSG_ID_MARCH_ARRIVED":   3003,
+		"MSG_ID_UNSPECIFIED":      0,
+		"MSG_ID_HEARTBEAT":        1,
+		"MSG_ID_CONNECT_REQ":      2,
+		"MSG_ID_RESUME_RSP":       3,
+		"MSG_ID_KICK":             4,
+		"MSG_ID_ROOM_ACTION_REQ":  1001,
+		"MSG_ID_ROOM_ACTION_RSP":  1002,
+		"MSG_ID_ROOM_SNAPSHOT":    1003,
+		"MSG_ID_SPIN_REQ":         2001,
+		"MSG_ID_SPIN_RSP":         2002,
+		"MSG_ID_MARCH_REQ":        3001,
+		"MSG_ID_MARCH_RSP":        3002,
+		"MSG_ID_MARCH_ARRIVED":    3003,
+		"MSG_ID_CITY_UPGRADE_REQ": 4001,
+		"MSG_ID_CITY_UPGRADE_RSP": 4002,
+		"MSG_ID_CITY_UPGRADED":    4003,
+		"MSG_ID_CITY_SNAPSHOT":    4004,
+		"MSG_ID_MAIL_CLAIM_REQ":   5001,
+		"MSG_ID_MAIL_CLAIM_RSP":   5002,
+		"MSG_ID_MAIL_NEW":         5003,
+		"MSG_ID_MAIL_SNAPSHOT":    5004,
 	}
 )
 
@@ -974,7 +998,7 @@ type MarchArrived struct {
 	MarchId       uint64                 `protobuf:"varint,1,opt,name=march_id,json=marchId,proto3" json:"march_id,omitempty"`
 	X             int32                  `protobuf:"varint,2,opt,name=x,proto3" json:"x,omitempty"`
 	Y             int32                  `protobuf:"varint,3,opt,name=y,proto3" json:"y,omitempty"`
-	Troops        int64                  `protobuf:"varint,4,opt,name=troops,proto3" json:"troops,omitempty"`
+	Troops        int64                  `protobuf:"varint,4,opt,name=troops,proto3" json:"troops,omitempty"` // Those left after any battle.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1033,6 +1057,610 @@ func (x *MarchArrived) GetY() int32 {
 func (x *MarchArrived) GetTroops() int64 {
 	if x != nil {
 		return x.Troops
+	}
+	return 0
+}
+
+type Building struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	Level         int32                  `protobuf:"varint,2,opt,name=level,proto3" json:"level,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Building) Reset() {
+	*x = Building{}
+	mi := &file_game_v1_envelope_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Building) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Building) ProtoMessage() {}
+
+func (x *Building) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Building.ProtoReflect.Descriptor instead.
+func (*Building) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *Building) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *Building) GetLevel() int32 {
+	if x != nil {
+		return x.Level
+	}
+	return 0
+}
+
+type CityUpgrade struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UpgradeId     uint64                 `protobuf:"varint,1,opt,name=upgrade_id,json=upgradeId,proto3" json:"upgrade_id,omitempty"`
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	ToLevel       int32                  `protobuf:"varint,3,opt,name=to_level,json=toLevel,proto3" json:"to_level,omitempty"`
+	FinishAtMs    int64                  `protobuf:"varint,4,opt,name=finish_at_ms,json=finishAtMs,proto3" json:"finish_at_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CityUpgrade) Reset() {
+	*x = CityUpgrade{}
+	mi := &file_game_v1_envelope_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CityUpgrade) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CityUpgrade) ProtoMessage() {}
+
+func (x *CityUpgrade) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CityUpgrade.ProtoReflect.Descriptor instead.
+func (*CityUpgrade) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *CityUpgrade) GetUpgradeId() uint64 {
+	if x != nil {
+		return x.UpgradeId
+	}
+	return 0
+}
+
+func (x *CityUpgrade) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *CityUpgrade) GetToLevel() int32 {
+	if x != nil {
+		return x.ToLevel
+	}
+	return 0
+}
+
+func (x *CityUpgrade) GetFinishAtMs() int64 {
+	if x != nil {
+		return x.FinishAtMs
+	}
+	return 0
+}
+
+type CitySnapshot struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Gold          int64                  `protobuf:"varint,1,opt,name=gold,proto3" json:"gold,omitempty"`
+	Buildings     []*Building            `protobuf:"bytes,2,rep,name=buildings,proto3" json:"buildings,omitempty"`
+	Upgrades      []*CityUpgrade         `protobuf:"bytes,3,rep,name=upgrades,proto3" json:"upgrades,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CitySnapshot) Reset() {
+	*x = CitySnapshot{}
+	mi := &file_game_v1_envelope_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CitySnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CitySnapshot) ProtoMessage() {}
+
+func (x *CitySnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CitySnapshot.ProtoReflect.Descriptor instead.
+func (*CitySnapshot) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *CitySnapshot) GetGold() int64 {
+	if x != nil {
+		return x.Gold
+	}
+	return 0
+}
+
+func (x *CitySnapshot) GetBuildings() []*Building {
+	if x != nil {
+		return x.Buildings
+	}
+	return nil
+}
+
+func (x *CitySnapshot) GetUpgrades() []*CityUpgrade {
+	if x != nil {
+		return x.Upgrades
+	}
+	return nil
+}
+
+type CityUpgradeReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CityUpgradeReq) Reset() {
+	*x = CityUpgradeReq{}
+	mi := &file_game_v1_envelope_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CityUpgradeReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CityUpgradeReq) ProtoMessage() {}
+
+func (x *CityUpgradeReq) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CityUpgradeReq.ProtoReflect.Descriptor instead.
+func (*CityUpgradeReq) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *CityUpgradeReq) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+type CityUpgradeRsp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Upgrade       *CityUpgrade           `protobuf:"bytes,1,opt,name=upgrade,proto3" json:"upgrade,omitempty"`
+	Gold          int64                  `protobuf:"varint,2,opt,name=gold,proto3" json:"gold,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CityUpgradeRsp) Reset() {
+	*x = CityUpgradeRsp{}
+	mi := &file_game_v1_envelope_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CityUpgradeRsp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CityUpgradeRsp) ProtoMessage() {}
+
+func (x *CityUpgradeRsp) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CityUpgradeRsp.ProtoReflect.Descriptor instead.
+func (*CityUpgradeRsp) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *CityUpgradeRsp) GetUpgrade() *CityUpgrade {
+	if x != nil {
+		return x.Upgrade
+	}
+	return nil
+}
+
+func (x *CityUpgradeRsp) GetGold() int64 {
+	if x != nil {
+		return x.Gold
+	}
+	return 0
+}
+
+type CityUpgraded struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	Level         int32                  `protobuf:"varint,2,opt,name=level,proto3" json:"level,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CityUpgraded) Reset() {
+	*x = CityUpgraded{}
+	mi := &file_game_v1_envelope_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CityUpgraded) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CityUpgraded) ProtoMessage() {}
+
+func (x *CityUpgraded) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CityUpgraded.ProtoReflect.Descriptor instead.
+func (*CityUpgraded) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *CityUpgraded) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *CityUpgraded) GetLevel() int32 {
+	if x != nil {
+		return x.Level
+	}
+	return 0
+}
+
+type Mail struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MailId        uint64                 `protobuf:"varint,1,opt,name=mail_id,json=mailId,proto3" json:"mail_id,omitempty"`
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	Title         string                 `protobuf:"bytes,3,opt,name=title,proto3" json:"title,omitempty"`
+	Body          string                 `protobuf:"bytes,4,opt,name=body,proto3" json:"body,omitempty"`
+	RewardGold    int64                  `protobuf:"varint,5,opt,name=reward_gold,json=rewardGold,proto3" json:"reward_gold,omitempty"`
+	Claimed       bool                   `protobuf:"varint,6,opt,name=claimed,proto3" json:"claimed,omitempty"`
+	SentAtMs      int64                  `protobuf:"varint,7,opt,name=sent_at_ms,json=sentAtMs,proto3" json:"sent_at_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Mail) Reset() {
+	*x = Mail{}
+	mi := &file_game_v1_envelope_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Mail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Mail) ProtoMessage() {}
+
+func (x *Mail) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Mail.ProtoReflect.Descriptor instead.
+func (*Mail) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *Mail) GetMailId() uint64 {
+	if x != nil {
+		return x.MailId
+	}
+	return 0
+}
+
+func (x *Mail) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *Mail) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *Mail) GetBody() string {
+	if x != nil {
+		return x.Body
+	}
+	return ""
+}
+
+func (x *Mail) GetRewardGold() int64 {
+	if x != nil {
+		return x.RewardGold
+	}
+	return 0
+}
+
+func (x *Mail) GetClaimed() bool {
+	if x != nil {
+		return x.Claimed
+	}
+	return false
+}
+
+func (x *Mail) GetSentAtMs() int64 {
+	if x != nil {
+		return x.SentAtMs
+	}
+	return 0
+}
+
+type MailSnapshot struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Mail          []*Mail                `protobuf:"bytes,1,rep,name=mail,proto3" json:"mail,omitempty"` // Newest first.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MailSnapshot) Reset() {
+	*x = MailSnapshot{}
+	mi := &file_game_v1_envelope_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MailSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MailSnapshot) ProtoMessage() {}
+
+func (x *MailSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MailSnapshot.ProtoReflect.Descriptor instead.
+func (*MailSnapshot) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *MailSnapshot) GetMail() []*Mail {
+	if x != nil {
+		return x.Mail
+	}
+	return nil
+}
+
+type MailNew struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Mail          *Mail                  `protobuf:"bytes,1,opt,name=mail,proto3" json:"mail,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MailNew) Reset() {
+	*x = MailNew{}
+	mi := &file_game_v1_envelope_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MailNew) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MailNew) ProtoMessage() {}
+
+func (x *MailNew) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MailNew.ProtoReflect.Descriptor instead.
+func (*MailNew) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *MailNew) GetMail() *Mail {
+	if x != nil {
+		return x.Mail
+	}
+	return nil
+}
+
+type MailClaimReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MailId        uint64                 `protobuf:"varint,1,opt,name=mail_id,json=mailId,proto3" json:"mail_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MailClaimReq) Reset() {
+	*x = MailClaimReq{}
+	mi := &file_game_v1_envelope_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MailClaimReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MailClaimReq) ProtoMessage() {}
+
+func (x *MailClaimReq) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MailClaimReq.ProtoReflect.Descriptor instead.
+func (*MailClaimReq) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *MailClaimReq) GetMailId() uint64 {
+	if x != nil {
+		return x.MailId
+	}
+	return 0
+}
+
+type MailClaimRsp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MailId        uint64                 `protobuf:"varint,1,opt,name=mail_id,json=mailId,proto3" json:"mail_id,omitempty"`
+	Gold          int64                  `protobuf:"varint,2,opt,name=gold,proto3" json:"gold,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MailClaimRsp) Reset() {
+	*x = MailClaimRsp{}
+	mi := &file_game_v1_envelope_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MailClaimRsp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MailClaimRsp) ProtoMessage() {}
+
+func (x *MailClaimRsp) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MailClaimRsp.ProtoReflect.Descriptor instead.
+func (*MailClaimRsp) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *MailClaimRsp) GetMailId() uint64 {
+	if x != nil {
+		return x.MailId
+	}
+	return 0
+}
+
+func (x *MailClaimRsp) GetGold() int64 {
+	if x != nil {
+		return x.Gold
 	}
 	return 0
 }
@@ -1103,7 +1731,48 @@ const file_game_v1_envelope_proto_rawDesc = "" +
 	"\bmarch_id\x18\x01 \x01(\x04R\amarchId\x12\f\n" +
 	"\x01x\x18\x02 \x01(\x05R\x01x\x12\f\n" +
 	"\x01y\x18\x03 \x01(\x05R\x01y\x12\x16\n" +
-	"\x06troops\x18\x04 \x01(\x03R\x06troops*\xbf\x02\n" +
+	"\x06troops\x18\x04 \x01(\x03R\x06troops\"4\n" +
+	"\bBuilding\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x14\n" +
+	"\x05level\x18\x02 \x01(\x05R\x05level\"}\n" +
+	"\vCityUpgrade\x12\x1d\n" +
+	"\n" +
+	"upgrade_id\x18\x01 \x01(\x04R\tupgradeId\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x19\n" +
+	"\bto_level\x18\x03 \x01(\x05R\atoLevel\x12 \n" +
+	"\ffinish_at_ms\x18\x04 \x01(\x03R\n" +
+	"finishAtMs\"\x85\x01\n" +
+	"\fCitySnapshot\x12\x12\n" +
+	"\x04gold\x18\x01 \x01(\x03R\x04gold\x12/\n" +
+	"\tbuildings\x18\x02 \x03(\v2\x11.game.v1.BuildingR\tbuildings\x120\n" +
+	"\bupgrades\x18\x03 \x03(\v2\x14.game.v1.CityUpgradeR\bupgrades\"$\n" +
+	"\x0eCityUpgradeReq\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\"T\n" +
+	"\x0eCityUpgradeRsp\x12.\n" +
+	"\aupgrade\x18\x01 \x01(\v2\x14.game.v1.CityUpgradeR\aupgrade\x12\x12\n" +
+	"\x04gold\x18\x02 \x01(\x03R\x04gold\"8\n" +
+	"\fCityUpgraded\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x14\n" +
+	"\x05level\x18\x02 \x01(\x05R\x05level\"\xb6\x01\n" +
+	"\x04Mail\x12\x17\n" +
+	"\amail_id\x18\x01 \x01(\x04R\x06mailId\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x14\n" +
+	"\x05title\x18\x03 \x01(\tR\x05title\x12\x12\n" +
+	"\x04body\x18\x04 \x01(\tR\x04body\x12\x1f\n" +
+	"\vreward_gold\x18\x05 \x01(\x03R\n" +
+	"rewardGold\x12\x18\n" +
+	"\aclaimed\x18\x06 \x01(\bR\aclaimed\x12\x1c\n" +
+	"\n" +
+	"sent_at_ms\x18\a \x01(\x03R\bsentAtMs\"1\n" +
+	"\fMailSnapshot\x12!\n" +
+	"\x04mail\x18\x01 \x03(\v2\r.game.v1.MailR\x04mail\",\n" +
+	"\aMailNew\x12!\n" +
+	"\x04mail\x18\x01 \x01(\v2\r.game.v1.MailR\x04mail\"'\n" +
+	"\fMailClaimReq\x12\x17\n" +
+	"\amail_id\x18\x01 \x01(\x04R\x06mailId\";\n" +
+	"\fMailClaimRsp\x12\x17\n" +
+	"\amail_id\x18\x01 \x01(\x04R\x06mailId\x12\x12\n" +
+	"\x04gold\x18\x02 \x01(\x03R\x04gold*\x9a\x04\n" +
 	"\x05MsgId\x12\x16\n" +
 	"\x12MSG_ID_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10MSG_ID_HEARTBEAT\x10\x01\x12\x16\n" +
@@ -1117,7 +1786,15 @@ const file_game_v1_envelope_proto_rawDesc = "" +
 	"\x0fMSG_ID_SPIN_RSP\x10\xd2\x0f\x12\x15\n" +
 	"\x10MSG_ID_MARCH_REQ\x10\xb9\x17\x12\x15\n" +
 	"\x10MSG_ID_MARCH_RSP\x10\xba\x17\x12\x19\n" +
-	"\x14MSG_ID_MARCH_ARRIVED\x10\xbb\x17*\xeb\x01\n" +
+	"\x14MSG_ID_MARCH_ARRIVED\x10\xbb\x17\x12\x1c\n" +
+	"\x17MSG_ID_CITY_UPGRADE_REQ\x10\xa1\x1f\x12\x1c\n" +
+	"\x17MSG_ID_CITY_UPGRADE_RSP\x10\xa2\x1f\x12\x19\n" +
+	"\x14MSG_ID_CITY_UPGRADED\x10\xa3\x1f\x12\x19\n" +
+	"\x14MSG_ID_CITY_SNAPSHOT\x10\xa4\x1f\x12\x1a\n" +
+	"\x15MSG_ID_MAIL_CLAIM_REQ\x10\x89'\x12\x1a\n" +
+	"\x15MSG_ID_MAIL_CLAIM_RSP\x10\x8a'\x12\x14\n" +
+	"\x0fMSG_ID_MAIL_NEW\x10\x8b'\x12\x19\n" +
+	"\x14MSG_ID_MAIL_SNAPSHOT\x10\x8c'*\xeb\x01\n" +
 	"\tErrorCode\x12\x11\n" +
 	"\rERROR_CODE_OK\x10\x00\x12\x1a\n" +
 	"\x16ERROR_CODE_BAD_REQUEST\x10\x01\x12\x1b\n" +
@@ -1141,33 +1818,49 @@ func file_game_v1_envelope_proto_rawDescGZIP() []byte {
 }
 
 var file_game_v1_envelope_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_game_v1_envelope_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_game_v1_envelope_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_game_v1_envelope_proto_goTypes = []any{
-	(MsgId)(0),            // 0: game.v1.MsgId
-	(ErrorCode)(0),        // 1: game.v1.ErrorCode
-	(*Envelope)(nil),      // 2: game.v1.Envelope
-	(*Binding)(nil),       // 3: game.v1.Binding
-	(*ConnectReq)(nil),    // 4: game.v1.ConnectReq
-	(*LoginReq)(nil),      // 5: game.v1.LoginReq
-	(*LoginRsp)(nil),      // 6: game.v1.LoginRsp
-	(*ResumeRsp)(nil),     // 7: game.v1.ResumeRsp
-	(*Kick)(nil),          // 8: game.v1.Kick
-	(*RoomActionReq)(nil), // 9: game.v1.RoomActionReq
-	(*RoomActionRsp)(nil), // 10: game.v1.RoomActionRsp
-	(*RoomSnapshot)(nil),  // 11: game.v1.RoomSnapshot
-	(*SpinReq)(nil),       // 12: game.v1.SpinReq
-	(*SpinRsp)(nil),       // 13: game.v1.SpinRsp
-	(*MarchReq)(nil),      // 14: game.v1.MarchReq
-	(*MarchRsp)(nil),      // 15: game.v1.MarchRsp
-	(*MarchArrived)(nil),  // 16: game.v1.MarchArrived
+	(MsgId)(0),             // 0: game.v1.MsgId
+	(ErrorCode)(0),         // 1: game.v1.ErrorCode
+	(*Envelope)(nil),       // 2: game.v1.Envelope
+	(*Binding)(nil),        // 3: game.v1.Binding
+	(*ConnectReq)(nil),     // 4: game.v1.ConnectReq
+	(*LoginReq)(nil),       // 5: game.v1.LoginReq
+	(*LoginRsp)(nil),       // 6: game.v1.LoginRsp
+	(*ResumeRsp)(nil),      // 7: game.v1.ResumeRsp
+	(*Kick)(nil),           // 8: game.v1.Kick
+	(*RoomActionReq)(nil),  // 9: game.v1.RoomActionReq
+	(*RoomActionRsp)(nil),  // 10: game.v1.RoomActionRsp
+	(*RoomSnapshot)(nil),   // 11: game.v1.RoomSnapshot
+	(*SpinReq)(nil),        // 12: game.v1.SpinReq
+	(*SpinRsp)(nil),        // 13: game.v1.SpinRsp
+	(*MarchReq)(nil),       // 14: game.v1.MarchReq
+	(*MarchRsp)(nil),       // 15: game.v1.MarchRsp
+	(*MarchArrived)(nil),   // 16: game.v1.MarchArrived
+	(*Building)(nil),       // 17: game.v1.Building
+	(*CityUpgrade)(nil),    // 18: game.v1.CityUpgrade
+	(*CitySnapshot)(nil),   // 19: game.v1.CitySnapshot
+	(*CityUpgradeReq)(nil), // 20: game.v1.CityUpgradeReq
+	(*CityUpgradeRsp)(nil), // 21: game.v1.CityUpgradeRsp
+	(*CityUpgraded)(nil),   // 22: game.v1.CityUpgraded
+	(*Mail)(nil),           // 23: game.v1.Mail
+	(*MailSnapshot)(nil),   // 24: game.v1.MailSnapshot
+	(*MailNew)(nil),        // 25: game.v1.MailNew
+	(*MailClaimReq)(nil),   // 26: game.v1.MailClaimReq
+	(*MailClaimRsp)(nil),   // 27: game.v1.MailClaimRsp
 }
 var file_game_v1_envelope_proto_depIdxs = []int32{
-	3, // 0: game.v1.ConnectReq.bindings:type_name -> game.v1.Binding
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	3,  // 0: game.v1.ConnectReq.bindings:type_name -> game.v1.Binding
+	17, // 1: game.v1.CitySnapshot.buildings:type_name -> game.v1.Building
+	18, // 2: game.v1.CitySnapshot.upgrades:type_name -> game.v1.CityUpgrade
+	18, // 3: game.v1.CityUpgradeRsp.upgrade:type_name -> game.v1.CityUpgrade
+	23, // 4: game.v1.MailSnapshot.mail:type_name -> game.v1.Mail
+	23, // 5: game.v1.MailNew.mail:type_name -> game.v1.Mail
+	6,  // [6:6] is the sub-list for method output_type
+	6,  // [6:6] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_game_v1_envelope_proto_init() }
@@ -1181,7 +1874,7 @@ func file_game_v1_envelope_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_game_v1_envelope_proto_rawDesc), len(file_game_v1_envelope_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   15,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -74,3 +74,58 @@ CREATE TABLE IF NOT EXISTS slg_march (
   KEY idx_uid (uid, state),
   UNIQUE KEY uk_request (uid, request_id)
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS slg_tile (
+  kingdom VARCHAR(32) NOT NULL,
+  x       INT         NOT NULL,
+  y       INT         NOT NULL,
+  uid     BIGINT      NOT NULL,
+  troops  BIGINT      NOT NULL,
+  PRIMARY KEY (kingdom, x, y),
+  KEY idx_uid (uid, kingdom)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS city_state (
+  uid     BIGINT      NOT NULL PRIMARY KEY,
+  gold    BIGINT      NOT NULL,
+  gold_at DATETIME(3) NOT NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS city_building (
+  uid   BIGINT      NOT NULL,
+  kind  VARCHAR(16) NOT NULL,
+  level INT         NOT NULL,
+  PRIMARY KEY (uid, kind)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS city_upgrade (
+  id         BIGINT      NOT NULL PRIMARY KEY,
+  uid        BIGINT      NOT NULL,
+  kind       VARCHAR(16) NOT NULL,
+  to_level   INT         NOT NULL,
+  request_id VARCHAR(64) NOT NULL,
+  finish_at  DATETIME(3) NOT NULL,
+  state      TINYINT     NOT NULL DEFAULT 0, -- 0 in progress, 1 done
+  UNIQUE KEY uk_request (uid, request_id),
+  KEY idx_uid (uid, state)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS city_grant (
+  uid       BIGINT      NOT NULL,
+  grant_key VARCHAR(64) NOT NULL,
+  PRIMARY KEY (uid, grant_key)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS mail_box (
+  id          BIGINT       NOT NULL PRIMARY KEY,
+  uid         BIGINT       NOT NULL,
+  dedupe_key  VARCHAR(64)  NOT NULL,
+  kind        VARCHAR(16)  NOT NULL,
+  title       VARCHAR(128) NOT NULL,
+  body        TEXT         NOT NULL,
+  reward_gold BIGINT       NOT NULL DEFAULT 0,
+  claimed     TINYINT(1)   NOT NULL DEFAULT 0,
+  sent_at     DATETIME(3)  NOT NULL,
+  UNIQUE KEY uk_dedupe (uid, dedupe_key),
+  KEY idx_list (uid, id)
+) ENGINE=InnoDB;

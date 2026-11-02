@@ -78,12 +78,12 @@ actions take hours or days, and one player touches many services at once.
 
 | Service | Owns | Scene key | Status |
 |---|---|---|---|
-| world | Map, marches, tile occupation | kingdom | **Sample implemented** |
+| world | Map, marches, tile occupation | kingdom | **Implemented** |
 | scheduler | Durable timers | shard | **`pkg/timer` implemented** |
-| city | Buildings, research, resources | uid | Planned |
+| city | Buildings, gold | uid | **Implemented** |
 | alliance | Membership, rallies, territory | alliance id | Planned |
-| battle | Stateless combat resolution | none | Planned |
-| mail | Reports, rewards | uid | Planned |
+| battle | Stateless combat resolution | none | **Library, `internal/battle`** |
+| mail | Reports, rewards | uid | **Implemented** |
 | chat | Kingdom and alliance channels | channel | Planned |
 | rank | Leaderboards (Redis sorted sets) | board | Planned |
 
@@ -91,6 +91,10 @@ One socket reaches all of them: `ConnectReq` lists bindings, and each binding is
 with its own `seq`. Clients set `channel` on every frame. The gateway sends the frame to
 that binding after checking that its `msg_id` range belongs to the binding's service. Add a
 service by giving it a range in `gateway.DefaultRoutes`.
+
+Battle is a library, not a service: it is a pure function, so a network hop would add
+latency and a failure mode and buy nothing. City and mail are per-player scenes keyed by
+uid. The client names a binding's key, so they refuse any key that is not its own uid.
 
 ### Timers
 
@@ -115,13 +119,17 @@ Timer fires -> conditional state change (exactly once) -> notify if online
 
 ```text
 world: march arrives -> tile is hostile
-  -> battle: compute result (pure function, seeded, replayable)
-  -> world: apply result (guarded by march id)
-  -> outbox -> city (losses), mail (report), rank (score)
+  -> battle: compute result (pure function, seeded by march id)
+  -> world: commit march state, tile, and a delivery job per report
+  -> mail: store letter once per key; player claims reward
+  -> mail: commit claimed flag and a grant job
+  -> city: add gold once per key
 ```
 
-Downstream steps are at-least-once and idempotent by march ID. There are no distributed
-transactions.
+Services hand work over through `timer_job`, written in the sender's own transaction, so
+nothing is lost between commits and Kafka stays optional. Each step is at-least-once and
+made exactly-once by a guard or unique key at the receiver. There are no distributed
+transactions. Each service's shards start at its own `ShardBase`, keeping their jobs apart.
 
 ### Scale notes
 
@@ -148,6 +156,9 @@ load tested.
 - Rate limits exist per connection only, not per IP or per account.
 - Gateway-to-backend gRPC is plaintext; use mTLS or a private network.
 - The slot math is sample data, not a certified model.
+- All SLG tables are on the first database. The transactions above need `timer_job` beside
+  the state they change, so sharding SLG means per-database timer tables.
+- Scene backlog can delay a city or mailbox: stores are called on the actor, up to 2s each.
 - A Redis failover can lose a recent epoch. Tokens from the lost login then fail, and the
   previous one works again until the next login. Avoiding this needs `WAIT` or a durable epoch.
 - A clock stepped back across a process restart can repeat IDs. Node IDs are unique among

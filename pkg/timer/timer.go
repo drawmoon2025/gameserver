@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"sync"
 	"time"
@@ -30,6 +31,14 @@ type Job struct {
 	Payload []byte
 	FireAt  time.Time
 	Attempt int
+}
+
+// KeyedID derives a job ID from a key, for a job whose sender has only a name
+// for it. The result fits a signed BIGINT.
+func KeyedID(key string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(key))
+	return h.Sum64() >> 1
 }
 
 // Store persists jobs. MySQL in production, memory in tests.
@@ -55,6 +64,7 @@ type Handler func(ctx context.Context, j Job) error
 type Config struct {
 	Owner      string
 	Shard      int
+	ShardBase  int // Group only: added to each slot, keeping services' jobs apart.
 	Store      Store
 	Poll       time.Duration // How often the store is scanned. Default 1s.
 	Lookahead  time.Duration // How far ahead jobs are loaded. Default 2*Poll.

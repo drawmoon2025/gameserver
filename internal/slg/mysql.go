@@ -60,7 +60,7 @@ func (s *MySQLStore) create(ctx context.Context, m March, arrive timer.Job) erro
 func (s *MySQLStore) Troops(ctx context.Context, kingdom string, uid int64) (int64, error) {
 	var total int64
 	err := s.DB.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(troops), 0) FROM slg_march WHERE uid = ? AND state = 1 AND kingdom = ?`,
+		`SELECT COALESCE(SUM(troops), 0) FROM slg_tile WHERE uid = ? AND kingdom = ?`,
 		uid, kingdom).Scan(&total)
 	return total, err
 }
@@ -68,7 +68,12 @@ func (s *MySQLStore) Troops(ctx context.Context, kingdom string, uid int64) (int
 // Arrive implements Store. The state guard in the UPDATE is the exactly-once
 // point: of any number of re-fires, one sees a changed row.
 func (s *MySQLStore) Arrive(ctx context.Context, id uint64) (March, bool, error) {
-	res, err := s.DB.ExecContext(ctx, `UPDATE slg_march SET state = 1 WHERE id = ? AND state = 0`, id)
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return March{}, false, err
+	}
+	defer tx.Rollback() //nolint:errcheck // No-op after Commit.
+	res, err := tx.ExecContext(ctx, `UPDATE slg_march SET state = 1 WHERE id = ? AND state = 0`, id)
 	if err != nil {
 		return March{}, false, err
 	}
@@ -77,7 +82,7 @@ func (s *MySQLStore) Arrive(ctx context.Context, id uint64) (March, bool, error)
 		return March{}, false, err
 	}
 	m := March{ID: id}
-	err = s.DB.QueryRowContext(ctx,
+	err = tx.QueryRowContext(ctx,
 		`SELECT kingdom, uid, from_x, from_y, to_x, to_y, troops, arrive_at FROM slg_march WHERE id = ?`, id).
 		Scan(&m.Kingdom, &m.UID, &m.FromX, &m.FromY, &m.ToX, &m.ToY, &m.Troops, &m.ArriveAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -86,5 +91,35 @@ func (s *MySQLStore) Arrive(ctx context.Context, id uint64) (March, bool, error)
 	if err != nil {
 		return March{}, false, err
 	}
-	return m, n == 1, nil
+	if n == 0 {
+		return m, false, nil
+	}
+
+	var t tile
+	err = tx.QueryRowContext(ctx, `SELECT uid, troops FROM slg_tile WHERE kingdom = ? AND x = ? AND y = ? FOR UPDATE`,
+		m.Kingdom, m.ToX, m.ToY).Scan(&t.Owner, &t.Troops)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return March{}, false, err
+	}
+	after, left, letters := settle(m, t)
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO slg_tile (kingdom, x, y, uid, troops) VALUES (?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE uid = VALUES(uid), troops = VALUES(troops)`,
+		m.Kingdom, m.ToX, m.ToY, after.Owner, after.Troops); err != nil {
+		return March{}, false, err
+	}
+	jobs, err := deliveries(letters)
+	if err != nil {
+		return March{}, false, err
+	}
+	for _, j := range jobs {
+		if err := timer.AddTx(ctx, tx, j); err != nil {
+			return March{}, false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return March{}, false, err
+	}
+	m.Troops = left
+	return m, true, nil
 }

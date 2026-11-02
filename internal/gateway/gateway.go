@@ -39,6 +39,10 @@ func DefaultRoutes(msgID uint32) (string, bool) {
 		return "room", true
 	case msgID >= 3000 && msgID < 4000:
 		return "world", true
+	case msgID >= 4000 && msgID < 5000:
+		return "city", true
+	case msgID >= 5000 && msgID < 6000:
+		return "mail", true
 	}
 	return "", false
 }

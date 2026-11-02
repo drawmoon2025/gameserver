@@ -3,8 +3,7 @@
 // the client is acknowledged, and arrival is applied exactly once by a
 // conditional state change, even though the timer fires at-least-once.
 //
-// The other SLG services (city, alliance, battle, mail, chat, rank) are
-// separate deployments that follow the same pattern. See docs/ARCHITECTURE.md.
+// See docs/ARCHITECTURE.md for how it relates to the other SLG services.
 package slg
 
 import (
@@ -50,10 +49,11 @@ type Store interface {
 	// If (UID, RequestID) exists it stores nothing and returns that march, since
 	// client_seq dedupe does not outlive the seat but a march does.
 	Create(ctx context.Context, m March, arrive timer.Job) (March, error)
-	// Arrive moves a marching march to arrived. It returns false if it was
-	// already arrived, which is what makes a re-fired timer harmless.
+	// Arrive moves a marching march to arrived and applies settle, in one
+	// commit that includes any mail. The returned march holds the troops left.
+	// It returns false if already arrived, making a re-fired timer harmless.
 	Arrive(ctx context.Context, id uint64) (March, bool, error)
-	// Troops sums a player's arrived troops in a kingdom.
+	// Troops sums the troops a player holds on tiles in a kingdom.
 	Troops(ctx context.Context, kingdom string, uid int64) (int64, error)
 }
 
@@ -64,11 +64,18 @@ type MemoryStore struct {
 	marches  map[uint64]March
 	arrived  map[uint64]bool
 	requests map[string]uint64
+	tiles    map[tileKey]tile
+}
+
+type tileKey struct {
+	kingdom string
+	x, y    int32
 }
 
 // NewMemoryStore creates an empty store that writes jobs to timers.
 func NewMemoryStore(timers timer.Store) *MemoryStore {
-	return &MemoryStore{timers: timers, marches: map[uint64]March{}, arrived: map[uint64]bool{}, requests: map[string]uint64{}}
+	return &MemoryStore{timers: timers, marches: map[uint64]March{}, arrived: map[uint64]bool{},
+		requests: map[string]uint64{}, tiles: map[tileKey]tile{}}
 }
 
 // Create implements Store.
@@ -87,7 +94,7 @@ func (s *MemoryStore) Create(ctx context.Context, m March, arrive timer.Job) (Ma
 }
 
 // Arrive implements Store.
-func (s *MemoryStore) Arrive(_ context.Context, id uint64) (March, bool, error) {
+func (s *MemoryStore) Arrive(ctx context.Context, id uint64) (March, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, ok := s.marches[id]
@@ -97,7 +104,20 @@ func (s *MemoryStore) Arrive(_ context.Context, id uint64) (March, bool, error) 
 	if s.arrived[id] {
 		return m, false, nil
 	}
+	key := tileKey{m.Kingdom, m.ToX, m.ToY}
+	after, left, letters := settle(m, s.tiles[key])
+	jobs, err := deliveries(letters)
+	if err != nil {
+		return March{}, false, err
+	}
+	for _, j := range jobs {
+		if err := s.timers.Add(ctx, j); err != nil {
+			return March{}, false, err
+		}
+	}
 	s.arrived[id] = true
+	s.tiles[key] = after
+	m.Troops = left
 	return m, true, nil
 }
 
@@ -106,9 +126,9 @@ func (s *MemoryStore) Troops(_ context.Context, kingdom string, uid int64) (int6
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var total int64
-	for id, m := range s.marches {
-		if s.arrived[id] && m.Kingdom == kingdom && m.UID == uid {
-			total += m.Troops
+	for key, t := range s.tiles {
+		if key.kingdom == kingdom && t.Owner == uid {
+			total += t.Troops
 		}
 	}
 	return total, nil

@@ -322,6 +322,9 @@ type Scene struct {
 	ctx *gamehost.SceneContext
 }
 
+// Admit implements gamehost.Gate.
+func (c *Scene) Admit(uid int64) error { return gamehost.AdmitOwner(c.key, uid) }
+
 // OnJoin implements gamehost.Scene.
 func (*Scene) OnJoin(*gamehost.Player) {}
 
@@ -343,9 +346,7 @@ func upgradeMsg(u Upgrade) *gamev1.CityUpgrade {
 
 // Snapshot implements gamehost.Scene.
 func (c *Scene) Snapshot(p *gamehost.Player) (gamev1.MsgId, proto.Message, error) {
-	if !p.IsOwner(c.key) {
-		return 0, nil, fmt.Errorf("city: uid %d opened city %s", p.UID, c.key)
-	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	s, err := c.svc.cfg.Store.Load(ctx, p.UID, c.svc.cfg.Now())
@@ -365,7 +366,7 @@ func (c *Scene) Snapshot(p *gamehost.Player) (gamev1.MsgId, proto.Message, error
 // OnMessage implements gamehost.Scene.
 func (c *Scene) OnMessage(p *gamehost.Player, env *gamev1.Envelope) gamehost.Reply {
 	req := &gamev1.CityUpgradeReq{}
-	if env.GetMsgId() != uint32(gamev1.MsgId_MSG_ID_CITY_UPGRADE_REQ) || !p.IsOwner(c.key) ||
+	if env.GetMsgId() != uint32(gamev1.MsgId_MSG_ID_CITY_UPGRADE_REQ) ||
 		proto.Unmarshal(env.GetPayload(), req) != nil ||
 		env.GetRequestId() == "" || len(env.GetRequestId()) > maxRequestID {
 		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST}

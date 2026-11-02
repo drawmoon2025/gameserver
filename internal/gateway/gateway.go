@@ -43,6 +43,12 @@ func DefaultRoutes(msgID uint32) (string, bool) {
 		return "city", true
 	case msgID >= 5000 && msgID < 6000:
 		return "mail", true
+	case msgID >= 6000 && msgID < 7000:
+		return "alliance", true
+	case msgID >= 7000 && msgID < 8000:
+		return "chat", true
+	case msgID >= 8000 && msgID < 9000:
+		return "rank", true
 	}
 	return "", false
 }

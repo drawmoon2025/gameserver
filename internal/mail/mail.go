@@ -209,6 +209,9 @@ type Scene struct {
 	ctx *gamehost.SceneContext
 }
 
+// Admit implements gamehost.Gate.
+func (c *Scene) Admit(uid int64) error { return gamehost.AdmitOwner(c.key, uid) }
+
 // OnJoin implements gamehost.Scene.
 func (*Scene) OnJoin(*gamehost.Player) {}
 
@@ -226,9 +229,7 @@ func (c *Scene) OnRetire() { c.svc.scenes.Remove(c.key, c) }
 
 // Snapshot implements gamehost.Scene.
 func (c *Scene) Snapshot(p *gamehost.Player) (gamev1.MsgId, proto.Message, error) {
-	if !p.IsOwner(c.key) {
-		return 0, nil, fmt.Errorf("mail: uid %d opened mailbox %s", p.UID, c.key)
-	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	list, err := c.svc.cfg.Store.List(ctx, p.UID, listLimit)
@@ -245,7 +246,7 @@ func (c *Scene) Snapshot(p *gamehost.Player) (gamev1.MsgId, proto.Message, error
 // OnMessage implements gamehost.Scene.
 func (c *Scene) OnMessage(p *gamehost.Player, env *gamev1.Envelope) gamehost.Reply {
 	req := &gamev1.MailClaimReq{}
-	if env.GetMsgId() != uint32(gamev1.MsgId_MSG_ID_MAIL_CLAIM_REQ) || !p.IsOwner(c.key) ||
+	if env.GetMsgId() != uint32(gamev1.MsgId_MSG_ID_MAIL_CLAIM_REQ) ||
 		proto.Unmarshal(env.GetPayload(), req) != nil {
 		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST}
 	}

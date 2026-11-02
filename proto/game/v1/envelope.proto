@@ -43,6 +43,22 @@ enum MsgId {
   MSG_ID_MAIL_CLAIM_RSP = 5002;
   MSG_ID_MAIL_NEW = 5003;
   MSG_ID_MAIL_SNAPSHOT = 5004;
+
+  MSG_ID_ALLIANCE_CREATE_REQ = 6001;
+  MSG_ID_ALLIANCE_JOIN_REQ = 6002;
+  MSG_ID_ALLIANCE_LEAVE_REQ = 6003;
+  MSG_ID_ALLIANCE_KICK_REQ = 6004;
+  MSG_ID_ALLIANCE_RSP = 6005;
+  MSG_ID_ALLIANCE_SNAPSHOT = 6006;
+
+  MSG_ID_CHAT_SEND_REQ = 7001;
+  MSG_ID_CHAT_SEND_RSP = 7002;
+  MSG_ID_CHAT_MESSAGE = 7003;
+  MSG_ID_CHAT_SNAPSHOT = 7004;
+
+  MSG_ID_RANK_QUERY_REQ = 8001;
+  MSG_ID_RANK_QUERY_RSP = 8002;
+  MSG_ID_RANK_SNAPSHOT = 8003;
 }
 
 enum ErrorCode {
@@ -192,4 +208,48 @@ message MailClaimReq {
 message MailClaimRsp {
   uint64 mail_id = 1;
   int64 gold = 2;
+}
+
+message AllianceInfo {
+  string name = 1;
+  int64 leader = 2;           // 0: no such alliance.
+  repeated int64 members = 3;  // By join order.
+}
+
+message AllianceKickReq {
+  int64 uid = 1;
+}
+
+message ChatMessage {
+  uint64 message_id = 1;
+  int64 uid = 2;
+  string text = 3;
+  int64 sent_at_ms = 4;
+}
+
+message ChatSnapshot {
+  string channel = 1;
+  repeated ChatMessage messages = 2;  // Oldest first.
+}
+
+message ChatSendReq {
+  string text = 1;
+}
+
+message ChatPush {
+  string channel = 1;
+  ChatMessage message = 2;
+}
+
+message RankEntry {
+  int64 uid = 1;
+  int64 score = 2;
+  int64 rank = 3;
+}
+
+message RankBoard {
+  string board = 1;
+  repeated RankEntry entries = 2;
+  int64 self_rank = 3;  // 0: not on the board.
+  int64 self_score = 4;
 }

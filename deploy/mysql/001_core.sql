@@ -116,6 +116,19 @@ CREATE TABLE IF NOT EXISTS city_grant (
   PRIMARY KEY (uid, grant_key)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS alliance (
+  name   VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
+  leader BIGINT NOT NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS alliance_member (
+  uid      BIGINT NOT NULL PRIMARY KEY, -- One alliance per player.
+  alliance VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  seq      BIGINT NOT NULL AUTO_INCREMENT,
+  UNIQUE KEY uk_seq (seq),
+  KEY idx_alliance (alliance, seq)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS mail_box (
   id          BIGINT       NOT NULL PRIMARY KEY,
   uid         BIGINT       NOT NULL,

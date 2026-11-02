@@ -1,6 +1,7 @@
 package gamehost
 
 import (
+	"fmt"
 	"strconv"
 	"sync"
 )
@@ -39,6 +40,12 @@ func (r *Registry[T]) Remove(key string, v T) {
 	}
 }
 
-// IsOwner reports whether key is this player's uid. The client names the key of
-// each binding, so a per-player scene must check it before showing anything.
-func (p *Player) IsOwner(key string) bool { return key == strconv.FormatInt(p.UID, 10) }
+// AdmitOwner is the Gate of a per-player scene, whose key is the owner's uid.
+// The client names the key of each binding, so this is what keeps one player out
+// of another's scene.
+func AdmitOwner(key string, uid int64) error {
+	if key != strconv.FormatInt(uid, 10) {
+		return fmt.Errorf("uid %d opened %s", uid, key)
+	}
+	return nil
+}

@@ -11,6 +11,7 @@ import (
 	gamev1 "github.com/yourname/gameserver/gen/game/v1"
 	"github.com/yourname/gameserver/internal/city"
 	"github.com/yourname/gameserver/internal/mail"
+	"github.com/yourname/gameserver/internal/rank"
 	"github.com/yourname/gameserver/internal/slg"
 	"github.com/yourname/gameserver/pkg/discovery"
 	"github.com/yourname/gameserver/pkg/timer"
@@ -21,6 +22,7 @@ import (
 type kingdom struct {
 	*stack
 	cities *city.Memory
+	boards *rank.Memory
 	jobs   *timer.MemStore
 	now    atomic.Int64 // Frozen city clock, so gold changes only when told to.
 }
@@ -37,7 +39,10 @@ func newKingdom(t *testing.T, grace time.Duration) *kingdom {
 		t.Cleanup(g.StopAll)
 		return g
 	}
-	wg, cg, mg := group(0), group(city.ShardBase), group(mail.ShardBase)
+	wg, cg, mg, rg := group(0), group(city.ShardBase), group(mail.ShardBase), group(rank.ShardBase)
+	k.boards = rank.NewMemory()
+	r := rank.New(rank.Config{Store: k.boards, Timers: rg})
+	rg.Start(context.Background(), discovery.Slot("kingdom:k1"))
 	w := slg.New(slg.Config{Store: slg.NewMemoryStore(k.jobs), Timers: wg, IDs: ids, Speed: 1000})
 	c := city.New(city.Config{Store: k.cities, Timers: cg, IDs: ids, Speed: 1000, Now: now})
 	m := mail.New(mail.Config{Store: mail.NewMemory(k.jobs), Timers: mg, IDs: ids})
@@ -51,6 +56,7 @@ func newKingdom(t *testing.T, grace time.Duration) *kingdom {
 		"world": {startBackend(t, w.Factory, grace)},
 		"city":  {startBackend(t, c.Factory, grace)},
 		"mail":  {startBackend(t, m.Factory, grace)},
+		"rank":  {startBackend(t, r.Factory, grace)},
 	})
 	return k
 }

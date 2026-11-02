@@ -105,8 +105,7 @@ func (s *MemoryStore) Arrive(ctx context.Context, id uint64) (March, bool, error
 		return m, false, nil
 	}
 	key := tileKey{m.Kingdom, m.ToX, m.ToY}
-	after, left, letters := settle(m, s.tiles[key])
-	jobs, err := deliveries(letters)
+	after, left, jobs, err := settle(m, s.tiles[key])
 	if err != nil {
 		return March{}, false, err
 	}

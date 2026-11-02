@@ -23,7 +23,8 @@ Optional: event_outbox -> Relay -> Kafka (KAFKA_ENABLED)
 3. **Kafka is side-channel.** It is off by default and core flows do not read from it.
 4. **Actors do not share memory.** Cross-actor work uses Tell plus a reply Tell, never nested Ask.
 5. **Newer epoch wins.** It is checked at connect, on attach, and on every value-moving HTTP request. A login is announced to gateways, which close older sockets at once; each socket also re-checks every few minutes in case the announcement was missed, and closes when its token expires.
-6. **A durable effect needs a durable key.** `client_seq` lives in memory and dies with the seat. Anything that writes to a store must also carry a `request_id` with a unique key.
+6. **A durable effect needs a durable key.** `client_seq` lives in memory and dies with the seat. Anything that moves value or progress must also carry a `request_id` with a unique key, or be safe to repeat by its nature. A repeated chat line is tolerated.
+7. **Rights are checked on every attach.** A client can resume a seat it held before losing the right to it, so a scene that restricts who enters implements `gamehost.Gate`. A check in `Snapshot` would be skipped by a replay.
 
 ## Reconnect
 
@@ -81,11 +82,11 @@ actions take hours or days, and one player touches many services at once.
 | world | Map, marches, tile occupation | kingdom | **Implemented** |
 | scheduler | Durable timers | shard | **`pkg/timer` implemented** |
 | city | Buildings, gold | uid | **Implemented** |
-| alliance | Membership, rallies, territory | alliance id | Planned |
+| alliance | Membership, leader, size limit | alliance name | **Implemented** (no rallies or territory yet) |
 | battle | Stateless combat resolution | none | **Library, `internal/battle`** |
 | mail | Reports, rewards | uid | **Implemented** |
-| chat | Kingdom and alliance channels | channel | Planned |
-| rank | Leaderboards (Redis sorted sets) | board | Planned |
+| chat | Kingdom and alliance channels | channel | **Implemented** |
+| rank | Leaderboards (Redis sorted sets) | board | **Implemented** |
 
 One socket reaches all of them: `ConnectReq` lists bindings, and each binding is a channel
 with its own `seq`. Clients set `channel` on every frame. The gateway sends the frame to
@@ -124,6 +125,7 @@ world: march arrives -> tile is hostile
   -> mail: store letter once per key; player claims reward
   -> mail: commit claimed flag and a grant job
   -> city: add gold once per key
+  -> rank: add score once per key (in the world's commit)
 ```
 
 Services hand work over through `timer_job`, written in the sender's own transaction, so
@@ -156,6 +158,9 @@ load tested.
 - Rate limits exist per connection only, not per IP or per account.
 - Gateway-to-backend gRPC is plaintext; use mTLS or a private network.
 - The slot math is sample data, not a certified model.
+- A chat channel pushes to every seated player on one actor, so a very large kingdom
+  channel needs fan-out split across actors. A kingdom channel is open to any player.
+- Rank scores live only in Redis. They are derived data, but no job rebuilds them yet.
 - All SLG tables are on the first database. The transactions above need `timer_job` beside
   the state they change, so sharding SLG means per-database timer tables.
 - Scene backlog can delay a city or mailbox: stores are called on the actor, up to 2s each.

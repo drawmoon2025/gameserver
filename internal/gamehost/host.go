@@ -50,6 +50,13 @@ type Scene interface {
 	Snapshot(p *Player) (gamev1.MsgId, proto.Message, error)
 }
 
+// Gate is an optional Scene method. If a scene implements it, every attach must
+// pass, whether it would replay or snapshot: a client can resume a seat it held
+// before losing the right to it, so a check in Snapshot is not enough.
+type Gate interface {
+	Admit(uid int64) error
+}
+
 // Factory creates a scene. The context gives it its actor, for timers.
 type Factory func(key string, ctx *SceneContext) Scene
 
@@ -222,6 +229,14 @@ type Player struct {
 	conn    uint64  // The socket on tun that currently owns this seat.
 	tun     *tunnel // Nil while disconnected.
 	offGen  uint64  // Invalidates an older grace timer.
+}
+
+// Close ends the player's socket, as when a right to this scene has ended.
+func (p *Player) Close(reason string) {
+	if p.tun != nil {
+		p.tun.send(&backendv1.Downstream{Uid: p.UID, Conn: p.conn,
+			Body: &backendv1.Downstream_CloseReason{CloseReason: reason}})
+	}
 }
 
 // Online reports whether a connection is attached.
@@ -433,6 +448,17 @@ func (s *sceneRun) attach(t *tunnel, uid int64, conn uint64, a *backendv1.Attach
 	if s.closing.Load() {
 		t.send(moved(uid, conn))
 		return
+	}
+	if g, ok := s.scene.(Gate); ok {
+		if err := g.Admit(uid); err != nil {
+			slog.Debug("attach refused", "scene", s.key, "uid", uid, "err", err)
+			t.send(&backendv1.Downstream{Uid: uid, Conn: conn,
+				Body: &backendv1.Downstream_CloseReason{CloseReason: "not allowed"}})
+			if len(s.players) == 0 {
+				s.host.retire(s)
+			}
+			return
+		}
 	}
 	p, known := s.players[uid]
 	if known && a.GetEpoch() < p.epoch {

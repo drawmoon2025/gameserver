@@ -1,6 +1,6 @@
 // Command server runs one role, or every role in one process for development.
 //
-//	ROLE=all|account|gateway|slots|room|world|city|mail
+//	ROLE=all|account|gateway|slots|room|world|city|mail|alliance|chat|rank
 //
 // With no MYSQL_DSNS and REDIS_ADDR it uses in-memory stores. That is for local
 // development only: state dies with the process and nothing is shared.
@@ -32,10 +32,13 @@ import (
 
 	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
 	"github.com/yourname/gameserver/internal/account"
+	"github.com/yourname/gameserver/internal/alliance"
+	"github.com/yourname/gameserver/internal/chat"
 	"github.com/yourname/gameserver/internal/city"
 	"github.com/yourname/gameserver/internal/gamehost"
 	"github.com/yourname/gameserver/internal/gateway"
 	"github.com/yourname/gameserver/internal/mail"
+	"github.com/yourname/gameserver/internal/rank"
 	"github.com/yourname/gameserver/internal/room"
 	"github.com/yourname/gameserver/internal/slg"
 	"github.com/yourname/gameserver/internal/slots"
@@ -68,6 +71,9 @@ type deps struct {
 	marches  slg.Store
 	cities   city.Store
 	mails    mail.Store
+	allies   alliance.Store
+	chats    chat.Store
+	boards   rank.Store
 	outboxes []events.Store
 	etcd     *clientv3.Client // Nil means a single node per stateful service.
 }
@@ -80,10 +86,15 @@ func build() (*deps, error) {
 	d := &deps{signer: &auth.Signer{Key: []byte(key), TTL: 24 * time.Hour}}
 
 	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
-		d.epochs = &session.Redis{Client: redis.NewUniversalClient(&redis.UniversalOptions{Addrs: strings.Split(addr, ",")})}
+		rdb := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: strings.Split(addr, ",")})
+		d.epochs = &session.Redis{Client: rdb}
+		d.chats = &chat.Redis{Client: rdb}
+		d.boards = &rank.Redis{Client: rdb}
 	} else {
 		slog.Warn("REDIS_ADDR unset: using in-memory sessions")
 		d.epochs = session.NewMemory()
+		d.chats = chat.NewMemory()
+		d.boards = rank.NewMemory()
 	}
 
 	if eps := os.Getenv("ETCD_ENDPOINTS"); eps != "" {
@@ -107,6 +118,7 @@ func build() (*deps, error) {
 		d.marches = slg.NewMemoryStore(timers)
 		d.cities = city.NewMemory(timers)
 		d.mails = mail.NewMemory(timers)
+		d.allies = alliance.NewMemory(timers)
 		d.outboxes = []events.Store{outbox}
 		return d, nil
 	}
@@ -134,6 +146,7 @@ func build() (*deps, error) {
 	d.marches = &slg.MySQLStore{DB: dbs[0]}
 	d.cities = &city.MySQL{DB: dbs[0]}
 	d.mails = &mail.MySQL{DB: dbs[0]}
+	d.allies = &alliance.MySQL{DB: dbs[0]}
 	return d, nil
 }
 
@@ -334,10 +347,32 @@ func run() error {
 			return err
 		}
 	}
+	if on("alliance") {
+		noop := func(int) {} // Alliance keeps no timers: it only sends them.
+		a := &alliance.Service{Store: d.allies}
+		if err := runGame(ctx, stop, &wg, d, "alliance", env("ALLIANCE_ADDR", ":9005"), a.Factory,
+			slotHooks{acquired: noop, released: noop}); err != nil {
+			return err
+		}
+	}
+	if on("chat") {
+		timers, hooks := timed("chat", chat.ShardBase)
+		c := chat.New(chat.Config{Store: d.chats, Timers: timers, IDs: d.ids, AllianceOf: d.allies.AllianceOf})
+		if err := runGame(ctx, stop, &wg, d, "chat", env("CHAT_ADDR", ":9006"), c.Factory, hooks); err != nil {
+			return err
+		}
+	}
+	if on("rank") {
+		timers, hooks := timed("rank", rank.ShardBase)
+		r := rank.New(rank.Config{Store: d.boards, Timers: timers})
+		if err := runGame(ctx, stop, &wg, d, "rank", env("RANK_ADDR", ":9007"), r.Factory, hooks); err != nil {
+			return err
+		}
+	}
 	if on("gateway") {
 		var resolver discovery.Resolver
 		if d.etcd != nil {
-			r := cluster.NewResolver(d.etcd, "", 0, "room", "world", "city", "mail")
+			r := cluster.NewResolver(d.etcd, "", 0, "room", "world", "city", "mail", "alliance", "chat", "rank")
 			go r.Run(ctx)
 			resolver = r
 		} else {
@@ -346,6 +381,9 @@ func run() error {
 				"world": strings.Split(env("WORLD_NODES", "127.0.0.1:9002"), ","),
 				"city":  strings.Split(env("CITY_NODES", "127.0.0.1:9003"), ","),
 				"mail":  strings.Split(env("MAIL_NODES", "127.0.0.1:9004"), ","),
+				"alliance": strings.Split(env("ALLIANCE_NODES", "127.0.0.1:9005"), ","),
+				"chat":     strings.Split(env("CHAT_NODES", "127.0.0.1:9006"), ","),
+				"rank":     strings.Split(env("RANK_NODES", "127.0.0.1:9007"), ","),
 			})
 		}
 		g := gateway.New(gateway.Config{Signer: d.signer, Epochs: d.epochs, Resolver: resolver})

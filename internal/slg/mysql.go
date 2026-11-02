@@ -101,15 +101,14 @@ func (s *MySQLStore) Arrive(ctx context.Context, id uint64) (March, bool, error)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return March{}, false, err
 	}
-	after, left, letters := settle(m, t)
+	after, left, jobs, err := settle(m, t)
+	if err != nil {
+		return March{}, false, err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO slg_tile (kingdom, x, y, uid, troops) VALUES (?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE uid = VALUES(uid), troops = VALUES(troops)`,
 		m.Kingdom, m.ToX, m.ToY, after.Owner, after.Troops); err != nil {
-		return March{}, false, err
-	}
-	jobs, err := deliveries(letters)
-	if err != nil {
 		return March{}, false, err
 	}
 	for _, j := range jobs {

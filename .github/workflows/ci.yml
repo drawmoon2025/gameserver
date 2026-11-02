@@ -24,7 +24,7 @@ jobs:
           sudo unzip -q -o /tmp/protoc.zip -d /usr/local
           protoc --version
       - run: bash scripts/verify.sh
-     - name: Check committed files are current
+      - name: Check committed files are current
         run: |
           git status --porcelain
           test -z "$(git status --porcelain)"

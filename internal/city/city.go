@@ -28,8 +28,9 @@ const ShardBase = 1000
 
 // Durable timer kinds.
 const (
-	KindFinish = "city.upgrade"
-	KindGrant  = "city.grant"
+	KindFinish  = "city.upgrade"
+	KindGrant   = "city.grant"
+	KindTrained = "city.train"
 )
 
 const (
@@ -37,6 +38,9 @@ const (
 	Mine = "mine" // Each level adds one gold per second.
 
 	startGold    = 500
+	startTroops  = 1000
+	troopCost    = 2 // Gold per troop.
+	maxBatch     = 100_000
 	maxLevel     = 30
 	maxRequestID = 64
 )
@@ -46,6 +50,9 @@ var (
 	ErrBadKind      = errors.New("city: no such building, or it is at its top level")
 	ErrBusy         = errors.New("city: building is already upgrading")
 	ErrInsufficient = errors.New("city: not enough gold")
+	ErrBadCount     = errors.New("city: bad troop count")
+	ErrNoTroops     = errors.New("city: not enough troops")
+	ErrNoCity       = errors.New("city: no such city")
 )
 
 // Upgrade is one building level in progress.
@@ -58,17 +65,29 @@ type Upgrade struct {
 	FinishAt  time.Time
 }
 
+// Training is one batch of troops in progress. A city trains one at a time.
+type Training struct {
+	ID        uint64
+	UID       int64
+	Count     int64
+	RequestID string
+	FinishAt  time.Time
+}
+
 // State is a city. Gold is computed lazily: it is correct as of GoldAt.
 type State struct {
 	UID       int64
 	Gold      int64
 	GoldAt    time.Time
+	Troops    int64 // Ready in the city. Armies on the map are not counted here.
 	Buildings map[string]int32
-	Upgrades  []Upgrade // In progress.
+	Upgrades  []Upgrade  // In progress.
+	Training  []Training // In progress.
 }
 
 func newState(uid int64, now time.Time) *State {
-	return &State{UID: uid, Gold: startGold, GoldAt: now, Buildings: map[string]int32{Hall: 1, Mine: 1}}
+	return &State{UID: uid, Gold: startGold, GoldAt: now, Troops: startTroops,
+		Buildings: map[string]int32{Hall: 1, Mine: 1}}
 }
 
 func (s *State) settle(now time.Time) {
@@ -104,6 +123,27 @@ func (s *State) begin(kind, requestID string, id uint64, now time.Time, speed fl
 	return u, nil
 }
 
+// train charges for and starts a batch, at one second per troop. speed divides
+// the duration.
+func (s *State) train(count int64, requestID string, id uint64, now time.Time, speed float64) (Training, error) {
+	if count <= 0 || count > maxBatch {
+		return Training{}, ErrBadCount
+	}
+	if len(s.Training) > 0 {
+		return Training{}, ErrBusy
+	}
+	s.settle(now)
+	cost := count * troopCost
+	if s.Gold < cost {
+		return Training{}, ErrInsufficient
+	}
+	s.Gold -= cost
+	took := time.Duration(float64(time.Duration(count)*time.Second) / speed)
+	t := Training{ID: id, UID: s.UID, Count: count, RequestID: requestID, FinishAt: now.Add(took)}
+	s.Training = append(s.Training, t)
+	return t, nil
+}
+
 func (s *State) finish(u Upgrade, now time.Time) {
 	s.settle(now) // Gold earned so far was earned at the old rate.
 	s.Buildings[u.Kind] = u.ToLevel
@@ -126,6 +166,11 @@ type Store interface {
 	Finish(ctx context.Context, id uint64, now time.Time) (Upgrade, bool, error)
 	// Grant adds gold once per key.
 	Grant(ctx context.Context, uid int64, key string, gold int64, now time.Time) error
+	// Train applies State.train and stores the batch with its timer in one
+	// commit. A repeated (uid, requestID) returns the first batch unchanged.
+	Train(ctx context.Context, uid int64, requestID string, count int64, id uint64, now time.Time, speed float64) (Training, int64, error)
+	// FinishTraining adds a batch's troops once. It returns false if already done.
+	FinishTraining(ctx context.Context, id uint64) (Training, bool, error)
 }
 
 func uidKey(uid int64) string { return strconv.FormatInt(uid, 10) }
@@ -135,6 +180,11 @@ func shardOf(uid int64) int { return ShardBase + discovery.Slot(uidKey(uid)) }
 func upgradeJob(u Upgrade) timer.Job {
 	return timer.Job{ID: u.ID, Shard: shardOf(u.UID), Kind: KindFinish,
 		Payload: binary.BigEndian.AppendUint64(nil, u.ID), FireAt: u.FinishAt}
+}
+
+func trainingJob(t Training) timer.Job {
+	return timer.Job{ID: t.ID, Shard: shardOf(t.UID), Kind: KindTrained,
+		Payload: binary.BigEndian.AppendUint64(nil, t.ID), FireAt: t.FinishAt}
 }
 
 type grant struct {
@@ -162,12 +212,15 @@ type Memory struct {
 	upgrades map[uint64]*Upgrade
 	requests map[string]Upgrade
 	grants   map[string]bool
+	batches  map[uint64]*Training
+	drills   map[string]Training
 }
 
 // NewMemory creates an empty store that writes jobs to timers.
 func NewMemory(timers timer.Store) *Memory {
 	return &Memory{timers: timers, cities: map[int64]*State{}, upgrades: map[uint64]*Upgrade{},
-		requests: map[string]Upgrade{}, grants: map[string]bool{}}
+		requests: map[string]Upgrade{}, grants: map[string]bool{},
+		batches: map[uint64]*Training{}, drills: map[string]Training{}}
 }
 
 func (m *Memory) city(uid int64, now time.Time) *State {
@@ -191,7 +244,73 @@ func (m *Memory) Load(_ context.Context, uid int64, now time.Time) (*State, erro
 		c.Buildings[k] = v
 	}
 	c.Upgrades = append([]Upgrade(nil), s.Upgrades...)
+	c.Training = append([]Training(nil), s.Training...)
 	return &c, nil
+}
+
+// Train implements Store.
+func (m *Memory) Train(ctx context.Context, uid int64, requestID string, count int64, id uint64, now time.Time, speed float64) (Training, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.city(uid, now)
+	key := fmt.Sprint(uid, ":", requestID)
+	if t, ok := m.drills[key]; ok {
+		s.settle(now)
+		return t, s.Gold, nil
+	}
+	gold, before := s.Gold, s.GoldAt
+	t, err := s.train(count, requestID, id, now, speed)
+	if err != nil {
+		return Training{}, 0, err
+	}
+	if err := m.timers.Add(ctx, trainingJob(t)); err != nil {
+		s.Gold, s.GoldAt = gold, before
+		s.Training = nil
+		return Training{}, 0, err
+	}
+	m.drills[key] = t
+	m.batches[t.ID] = &t
+	return t, s.Gold, nil
+}
+
+// FinishTraining implements Store.
+func (m *Memory) FinishTraining(_ context.Context, id uint64) (Training, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.batches[id]
+	if !ok {
+		for _, d := range m.drills {
+			if d.ID == id {
+				return d, false, nil
+			}
+		}
+		return Training{}, false, fmt.Errorf("city: unknown training %d", id)
+	}
+	s := m.cities[t.UID]
+	s.Troops += t.Count
+	s.Training = nil
+	delete(m.batches, id)
+	return *t, true, nil
+}
+
+// TakeTroops moves troops out of a city, for the world service to march.
+func (m *Memory) TakeTroops(_ context.Context, uid, n int64, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.city(uid, now)
+	if s.Troops < n {
+		return ErrNoTroops
+	}
+	s.Troops -= n
+	return nil
+}
+
+// AddTroops returns troops to a city.
+func (m *Memory) AddTroops(_ context.Context, uid, n int64, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.city(uid, now).Troops += n
+	return nil
 }
 
 // Begin implements Store.
@@ -278,6 +397,7 @@ func New(cfg Config) *Service {
 	s := &Service{cfg: cfg}
 	cfg.Timers.Handle(KindFinish, s.onFinish)
 	cfg.Timers.Handle(KindGrant, s.onGrant)
+	cfg.Timers.Handle(KindTrained, s.onTrained)
 	return s
 }
 
@@ -301,6 +421,25 @@ func (s *Service) onFinish(ctx context.Context, j timer.Job) error {
 		c.ctx.Actor.Post(func() {
 			if p := c.ctx.Player(u.UID); p != nil {
 				p.Push(gamev1.MsgId_MSG_ID_CITY_UPGRADED, &gamev1.CityUpgraded{Kind: u.Kind, Level: u.ToLevel})
+			}
+		})
+	}
+	return nil
+}
+
+func (s *Service) onTrained(ctx context.Context, j timer.Job) error {
+	if len(j.Payload) != 8 {
+		return fmt.Errorf("city: bad payload for job %d", j.ID)
+	}
+	t, applied, err := s.cfg.Store.FinishTraining(ctx, binary.BigEndian.Uint64(j.Payload))
+	if err != nil || !applied {
+		return err
+	}
+	if c, ok := s.scenes.Get(uidKey(t.UID)); ok {
+		// Best effort, as for an upgrade.
+		c.ctx.Actor.Post(func() {
+			if p := c.ctx.Player(t.UID); p != nil {
+				p.Push(gamev1.MsgId_MSG_ID_CITY_TRAINED, &gamev1.CityTrained{Count: t.Count})
 			}
 		})
 	}
@@ -344,16 +483,22 @@ func upgradeMsg(u Upgrade) *gamev1.CityUpgrade {
 	return &gamev1.CityUpgrade{UpgradeId: u.ID, Kind: u.Kind, ToLevel: u.ToLevel, FinishAtMs: u.FinishAt.UnixMilli()}
 }
 
+func trainingMsg(t Training) *gamev1.CityTraining {
+	return &gamev1.CityTraining{TrainingId: t.ID, Count: t.Count, FinishAtMs: t.FinishAt.UnixMilli()}
+}
+
 // Snapshot implements gamehost.Scene.
 func (c *Scene) Snapshot(p *gamehost.Player) (gamev1.MsgId, proto.Message, error) {
-
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	s, err := c.svc.cfg.Store.Load(ctx, p.UID, c.svc.cfg.Now())
 	if err != nil {
 		return 0, nil, err
 	}
-	msg := &gamev1.CitySnapshot{Gold: s.Gold}
+	msg := &gamev1.CitySnapshot{Gold: s.Gold, Troops: s.Troops}
+	for _, t := range s.Training {
+		msg.Training = append(msg.Training, trainingMsg(t))
+	}
 	for kind, level := range s.Buildings {
 		msg.Buildings = append(msg.Buildings, &gamev1.Building{Kind: kind, Level: level})
 	}
@@ -365,10 +510,52 @@ func (c *Scene) Snapshot(p *gamehost.Player) (gamev1.MsgId, proto.Message, error
 
 // OnMessage implements gamehost.Scene.
 func (c *Scene) OnMessage(p *gamehost.Player, env *gamev1.Envelope) gamehost.Reply {
+	if env.GetRequestId() == "" || len(env.GetRequestId()) > maxRequestID {
+		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST}
+	}
+	switch env.GetMsgId() {
+	case uint32(gamev1.MsgId_MSG_ID_CITY_UPGRADE_REQ):
+		return c.upgrade(p, env)
+	case uint32(gamev1.MsgId_MSG_ID_CITY_TRAIN_REQ):
+		return c.drill(p, env)
+	}
+	return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST}
+}
+
+func failure(uid int64, what string, err error) gamehost.Reply {
+	switch {
+	case errors.Is(err, ErrBadKind), errors.Is(err, ErrBadCount):
+		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST}
+	case errors.Is(err, ErrBusy):
+		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_DUPLICATE_IN_PROGRESS}
+	case errors.Is(err, ErrInsufficient):
+		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_INSUFFICIENT_FUNDS}
+	}
+	slog.Error(what, "uid", uid, "err", err)
+	return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_INTERNAL}
+}
+
+func (c *Scene) drill(p *gamehost.Player, env *gamev1.Envelope) gamehost.Reply {
+	req := &gamev1.CityTrainReq{}
+	if proto.Unmarshal(env.GetPayload(), req) != nil {
+		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST}
+	}
+	s := c.svc
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	t, gold, err := s.cfg.Store.Train(ctx, p.UID, env.GetRequestId(), req.GetCount(),
+		uint64(s.cfg.IDs.Next()), s.cfg.Now(), s.cfg.Speed)
+	if err != nil {
+		return failure(p.UID, "begin training", err)
+	}
+	s.cfg.Timers.Wake(discovery.Slot(c.key))
+	return gamehost.Reply{MsgID: gamev1.MsgId_MSG_ID_CITY_TRAIN_RSP,
+		Msg: &gamev1.CityTrainRsp{Training: trainingMsg(t), Gold: gold}}
+}
+
+func (c *Scene) upgrade(p *gamehost.Player, env *gamev1.Envelope) gamehost.Reply {
 	req := &gamev1.CityUpgradeReq{}
-	if env.GetMsgId() != uint32(gamev1.MsgId_MSG_ID_CITY_UPGRADE_REQ) ||
-		proto.Unmarshal(env.GetPayload(), req) != nil ||
-		env.GetRequestId() == "" || len(env.GetRequestId()) > maxRequestID {
+	if proto.Unmarshal(env.GetPayload(), req) != nil {
 		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST}
 	}
 	s := c.svc
@@ -376,17 +563,8 @@ func (c *Scene) OnMessage(p *gamehost.Player, env *gamev1.Envelope) gamehost.Rep
 	defer cancel()
 	u, gold, err := s.cfg.Store.Begin(ctx, p.UID, env.GetRequestId(), req.GetKind(),
 		uint64(s.cfg.IDs.Next()), s.cfg.Now(), s.cfg.Speed)
-	switch {
-	case err == nil:
-	case errors.Is(err, ErrBadKind):
-		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST}
-	case errors.Is(err, ErrBusy):
-		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_DUPLICATE_IN_PROGRESS}
-	case errors.Is(err, ErrInsufficient):
-		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_INSUFFICIENT_FUNDS}
-	default:
-		slog.Error("begin upgrade", "uid", p.UID, "err", err)
-		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_INTERNAL}
+	if err != nil {
+		return failure(p.UID, "begin upgrade", err)
 	}
 	s.cfg.Timers.Wake(discovery.Slot(c.key))
 	return gamehost.Reply{MsgID: gamev1.MsgId_MSG_ID_CITY_UPGRADE_RSP,

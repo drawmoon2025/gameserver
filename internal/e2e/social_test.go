@@ -8,6 +8,7 @@ import (
 	gamev1 "github.com/yourname/gameserver/gen/game/v1"
 	"github.com/yourname/gameserver/internal/alliance"
 	"github.com/yourname/gameserver/internal/chat"
+	"github.com/yourname/gameserver/internal/realm"
 	"github.com/yourname/gameserver/pkg/discovery"
 	"github.com/yourname/gameserver/pkg/idgen"
 	"github.com/yourname/gameserver/pkg/timer"
@@ -28,7 +29,7 @@ func newSociety(t *testing.T, minGap time.Duration) *society {
 	timers := timer.NewGroup(timer.Config{Owner: "t", Store: jobs, Poll: 5 * time.Millisecond, ShardBase: chat.ShardBase})
 	t.Cleanup(timers.StopAll)
 	members := alliance.NewMemory(jobs)
-	c := chat.New(chat.Config{Store: chat.NewMemory(), Timers: timers, IDs: ids, AllianceOf: members.AllianceOf, MinGap: minGap})
+	c := chat.New(chat.Config{Store: chat.NewMemory(), Timers: timers, IDs: ids, AllianceOf: members.AllianceOf, MemberOf: inK, MinGap: minGap})
 	timers.Start(context.Background(), discovery.Slot(chat.AllianceChannel("wolves")))
 	a := &alliance.Service{Store: members}
 	return &society{newStack(t, map[string][]string{
@@ -130,10 +131,10 @@ func TestBattleScoreReachesTheBoard(t *testing.T) {
 	}
 	world := &gamev1.Binding{Service: "world", Key: "k1"}
 	d := k.dial(t, k.login(t, 1), world)
-	d.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	d.until(gamev1.MsgId_MSG_ID_WORLD_SNAPSHOT)
 	war(d, "d1", 10)
 	a := k.dial(t, k.login(t, 2), world)
-	a.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	a.until(gamev1.MsgId_MSG_ID_WORLD_SNAPSHOT)
 	war(a, "a1", 1000)
 
 	deadline := time.Now().Add(3 * time.Second)
@@ -155,4 +156,9 @@ func TestBattleScoreReachesTheBoard(t *testing.T) {
 	if got.GetSelfRank() != 1 || got.GetSelfScore() != 10 || len(got.GetEntries()) != 1 {
 		t.Fatalf("board %v", got)
 	}
+}
+
+// inK places every player in kingdom k.
+func inK(_ context.Context, uid int64) (realm.Member, error) {
+	return realm.Member{UID: uid, Kingdom: "k"}, nil
 }

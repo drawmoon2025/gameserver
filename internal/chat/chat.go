@@ -17,6 +17,7 @@ import (
 
 	gamev1 "github.com/yourname/gameserver/gen/game/v1"
 	"github.com/yourname/gameserver/internal/gamehost"
+	"github.com/yourname/gameserver/internal/realm"
 	"github.com/yourname/gameserver/pkg/discovery"
 	"github.com/yourname/gameserver/pkg/idgen"
 	"github.com/yourname/gameserver/pkg/timer"
@@ -144,6 +145,7 @@ type Config struct {
 	IDs    *idgen.Generator
 	// AllianceOf names a player's alliance, or "" if none.
 	AllianceOf func(ctx context.Context, uid int64) (string, error)
+	MemberOf func(ctx context.Context, uid int64) (realm.Member, error)
 	MinGap     time.Duration // Between one player's messages. Default 500ms.
 	Now        func() time.Time
 }
@@ -191,8 +193,9 @@ func (s *Service) onRevoke(_ context.Context, j timer.Job) error {
 
 // allowed decides who may be in a channel.
 func (s *Service) allowed(ctx context.Context, uid int64, key string) (bool, error) {
-	if strings.HasPrefix(key, "kingdom:") {
-		return true, nil
+	if id, ok := strings.CutPrefix(key, "kingdom:"); ok {
+		me, err := s.cfg.MemberOf(ctx, uid)
+		return id != "" && me.Kingdom == id, err
 	}
 	name, ok := strings.CutPrefix(key, "alliance:")
 	if !ok || name == "" {

@@ -4,10 +4,12 @@ package slg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/yourname/gameserver/internal/city"
 	"github.com/yourname/gameserver/internal/itest"
 	"github.com/yourname/gameserver/pkg/timer"
 )
@@ -112,5 +114,88 @@ func TestMySQLMarchIsRolledBackIfItsTimerFails(t *testing.T) {
 	}
 	if _, _, err := s.Arrive(ctx, m.ID); err == nil {
 		t.Fatal("the march survived its timer's failure")
+	}
+}
+
+func TestMySQLArmyLeavesAndReturnsToItsCity(t *testing.T) {
+	ctx := context.Background()
+	db := itest.MySQL(t)
+	s, cities := &MySQLStore{DB: db}, &city.MySQL{DB: db}
+	m, job := marchFixture()
+	m.Troops = 900
+	cityTroops := func() int64 {
+		t.Helper()
+		c, err := cities.Load(ctx, m.UID, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.Troops
+	}
+	if _, err := s.Create(ctx, m, job); err != nil {
+		t.Fatal(err)
+	}
+	if got := cityTroops(); got != 100 {
+		t.Fatalf("city holds %d after the army left", got)
+	}
+	if _, err := s.Create(ctx, m, job); err != nil {
+		t.Fatal(err)
+	}
+	if got := cityTroops(); got != 100 {
+		t.Fatalf("a retry took troops again: %d", got)
+	}
+	over, overJob := marchFixture()
+	over.UID, over.Troops = m.UID, 101
+	if _, err := s.Create(ctx, over, overJob); !errors.Is(err, city.ErrNoTroops) {
+		t.Fatalf("too many troops: %v", err)
+	}
+	if active, err := s.Active(ctx, m.Kingdom, m.UID); err != nil || len(active) != 1 {
+		t.Fatalf("active %+v: %v", active, err)
+	}
+	if _, applied, err := s.Arrive(ctx, m.ID); err != nil || !applied {
+		t.Fatalf("arrive %v: %v", applied, err)
+	}
+
+	back := March{ID: uint64(itest.ID()), Kingdom: m.Kingdom, UID: m.UID, RequestID: fmt.Sprint("b", m.ID),
+		FromX: m.ToX, FromY: m.ToY, Troops: 900, ArriveAt: time.Now(), Home: true}
+	backJob := timer.Job{ID: back.ID, Shard: job.Shard, Kind: KindMarchArrive, Payload: []byte("p"), FireAt: back.ArriveAt}
+	tooMany := back
+	tooMany.Troops, tooMany.RequestID = 901, "x"+back.RequestID
+	if _, err := s.Recall(ctx, tooMany, backJob); !errors.Is(err, city.ErrNoTroops) {
+		t.Fatalf("recall of too many: %v", err)
+	}
+	if _, err := s.Recall(ctx, back, backJob); err != nil {
+		t.Fatal(err)
+	}
+	if tiles, err := s.Owned(ctx, m.Kingdom, m.UID); err != nil || len(tiles) != 0 {
+		t.Fatalf("emptied tile remains: %+v, %v", tiles, err)
+	}
+	for range 2 {
+		if _, _, err := s.Arrive(ctx, back.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := cityTroops(); got != 1000 {
+		t.Fatalf("city holds %d after the return", got)
+	}
+}
+
+func TestMySQLViewShowsNearbyTiles(t *testing.T) {
+	ctx := context.Background()
+	db := itest.MySQL(t)
+	s := &MySQLStore{DB: db}
+	m, job := marchFixture()
+	m.ToX, m.ToY = 100, 100
+	if _, err := s.Create(ctx, m, job); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Arrive(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	near, err := s.View(ctx, m.Kingdom, 105, 95, viewRadius)
+	if err != nil || len(near) != 1 || near[0].Owner != m.UID {
+		t.Fatalf("near %+v: %v", near, err)
+	}
+	if far, err := s.View(ctx, m.Kingdom, 200, 100, viewRadius); err != nil || len(far) != 0 {
+		t.Fatalf("far %+v: %v", far, err)
 	}
 }

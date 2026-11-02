@@ -8,6 +8,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/yourname/gameserver/internal/realm"
 )
 
 func TestHistoryIsCappedAndOrdered(t *testing.T) {
@@ -38,6 +40,11 @@ func TestChannelAccess(t *testing.T) {
 			return "wolves", nil
 		}
 		return "", nil
+	}, MemberOf: func(_ context.Context, uid int64) (realm.Member, error) {
+		if uid == 1 {
+			return realm.Member{UID: uid, Kingdom: "k"}, nil
+		}
+		return realm.Member{UID: uid}, nil
 	}}}
 	ctx := context.Background()
 	for _, c := range []struct {
@@ -46,7 +53,9 @@ func TestChannelAccess(t *testing.T) {
 		want bool
 	}{
 		{1, "kingdom:k", true},
-		{2, "kingdom:k", true},
+		{1, "kingdom:other", false},
+		{2, "kingdom:k", false},
+		{2, "kingdom:", false}, // No kingdom must not match an empty ID.
 		{1, "alliance:wolves", true},
 		{2, "alliance:wolves", false},
 		{1, "alliance:bears", false},

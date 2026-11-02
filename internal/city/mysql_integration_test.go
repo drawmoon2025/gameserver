@@ -72,3 +72,89 @@ func TestMySQLGrantsApplyOnceUnderConcurrency(t *testing.T) {
 		t.Fatalf("state %+v: %v", s, err)
 	}
 }
+
+func TestMySQLTrainingLifecycle(t *testing.T) {
+	ctx := context.Background()
+	db := itest.MySQL(t)
+	m := &MySQL{DB: db}
+	uid := itest.ID()
+	now := time.Now().Truncate(time.Second)
+
+	b, gold, err := m.Train(ctx, uid, "r", 100, uint64(itest.ID()), now, 1)
+	if err != nil || gold != startGold-200 || !b.FinishAt.Equal(now.Add(100*time.Second)) {
+		t.Fatalf("train %+v, gold %d: %v", b, gold, err)
+	}
+	if again, gold, err := m.Train(ctx, uid, "r", 100, uint64(itest.ID()), now, 1); err != nil || again.ID != b.ID || gold != startGold-200 {
+		t.Fatalf("retry %+v, gold %d: %v", again, gold, err)
+	}
+	if _, _, err := m.Train(ctx, uid, "other", 1, uint64(itest.ID()), now, 1); !errors.Is(err, ErrBusy) {
+		t.Fatalf("second batch: %v", err)
+	}
+	if _, applied, err := m.FinishTraining(ctx, b.ID); err != nil || !applied {
+		t.Fatalf("finish %v: %v", applied, err)
+	}
+	if _, applied, err := m.FinishTraining(ctx, b.ID); err != nil || applied {
+		t.Fatalf("a re-fire applied again: %v", err)
+	}
+	s, err := m.Load(ctx, uid, now)
+	if err != nil || s.Troops != startTroops+100 || len(s.Training) != 0 {
+		t.Fatalf("state %+v: %v", s, err)
+	}
+}
+
+func TestMySQLTroopsCannotGoNegativeUnderConcurrency(t *testing.T) {
+	ctx := context.Background()
+	db := itest.MySQL(t)
+	m := &MySQL{DB: db}
+	uid := itest.ID()
+	if err := m.Ensure(ctx, uid, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	take := func() error {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback() //nolint:errcheck // No-op after Commit.
+		if err := TakeTroopsTx(ctx, tx, uid, 300); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	var (
+		wg     sync.WaitGroup
+		mu     sync.Mutex
+		passed int
+	)
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			switch err := take(); {
+			case err == nil:
+				mu.Lock()
+				passed++
+				mu.Unlock()
+			case !errors.Is(err, ErrNoTroops):
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if passed != startTroops/300 {
+		t.Fatalf("%d takes of 300 from %d", passed, startTroops)
+	}
+}
+
+func TestTakeTroopsNamesAMissingCity(t *testing.T) {
+	ctx := context.Background()
+	db := itest.MySQL(t)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback() //nolint:errcheck // Read only.
+	if err := TakeTroopsTx(ctx, tx, itest.ID(), 1); !errors.Is(err, ErrNoCity) {
+		t.Fatalf("got %v", err)
+	}
+}

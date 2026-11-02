@@ -4,7 +4,7 @@
 
 ```text
 Client ── WSS ──> L4 LB ──> Gateway ── gRPC tunnel ──> Room / SLG services
-Client ── HTTPS ─> L7 LB ──> Account, Slots (stateless)
+Client ── HTTPS ─> L7 LB ──> Account (login, server list), Slots (stateless)
 
 Stores: Redis Cluster (epochs, cache), MySQL shards (truth)
 Optional: event_outbox -> Relay -> Kafka (KAFKA_ENABLED)
@@ -15,6 +15,11 @@ Optional: event_outbox -> Relay -> Kafka (KAFKA_ENABLED)
 | Room (cards, fishing) | WebSocket | In a Scene actor on one node | Adding nodes; rooms hash to nodes |
 | Slots | HTTP | None between requests; truth in wallet | Adding instances |
 | SLG | WebSocket | Kingdom actors plus durable timers | Adding service types and kingdoms |
+
+An SLG client uses HTTP only until it has a server: `POST /v1/login`, `GET /v1/servers`,
+`POST /v1/servers/enter`. It then opens the returned `ws_url`, and all play goes over that
+socket. Slots is the exception by design: it is HTTP throughout, and a spin's result is in
+its response, so it has no push channel.
 
 ## Rules that hold everywhere
 
@@ -79,9 +84,10 @@ actions take hours or days, and one player touches many services at once.
 
 | Service | Owns | Scene key | Status |
 |---|---|---|---|
+| realm | Server list, which kingdom a player is in | none (HTTP) | **Implemented** |
 | world | Map, marches, tile occupation | kingdom | **Implemented** |
 | scheduler | Durable timers | shard | **`pkg/timer` implemented** |
-| city | Buildings, gold | uid | **Implemented** |
+| city | Buildings, gold, troops at home | uid | **Implemented** |
 | alliance | Membership, leader, size limit | alliance name | **Implemented** (no rallies or territory yet) |
 | battle | Stateless combat resolution | none | **Library, `internal/battle`** |
 | mail | Reports, rewards | uid | **Implemented** |
@@ -96,6 +102,16 @@ service by giving it a range in `gateway.DefaultRoutes`.
 Battle is a library, not a service: it is a pure function, so a network hop would add
 latency and a failure mode and buy nothing. City and mail are per-player scenes keyed by
 uid. The client names a binding's key, so they refuse any key that is not its own uid.
+
+### Troops
+
+A troop is in exactly one place: a city, a march, or a tile. Training adds to the city. A
+march moves troops from the city, and a recall moves them from a tile back to it. Battle is
+the only thing that removes them. The server decides every count, so a client cannot march
+what it does not have.
+
+Taking troops must be synchronous, so a march takes them from `city_state` in its own
+transaction rather than through a job. That is why these tables share a database.
 
 ### Timers
 
@@ -136,7 +152,8 @@ transactions. Each service's shards start at its own `ShardBase`, keeping their 
 ### Scale notes
 
 - A kingdom is a natural shard. A very busy kingdom splits into zone actors.
-- Clients subscribe to a viewport (9 grid cells), never to the whole map.
+- A client asks for the map around a point, 21 by 21 tiles at a time. This is a read, not a
+  subscription: nothing is pushed when another player's army moves.
 - World ticks must stay short; heavy work moves out of the actor.
 
 ## Capacity
@@ -159,7 +176,11 @@ load tested.
 - Gateway-to-backend gRPC is plaintext; use mTLS or a private network.
 - The slot math is sample data, not a certified model.
 - A chat channel pushes to every seated player on one actor, so a very large kingdom
-  channel needs fan-out split across actors. A kingdom channel is open to any player.
+  channel needs fan-out split across actors.
+- A player is in one kingdom for good; there is no transfer or merge.
+- A city's position is a hash, so two cities can share coordinates. Cities cannot be
+  attacked; only tiles can.
+- Other players see an army only once it holds a tile.
 - Rank scores live only in Redis. They are derived data, but no job rebuilds them yet.
 - All SLG tables are on the first database. The transactions above need `timer_job` beside
   the state they change, so sharding SLG means per-database timer tables.

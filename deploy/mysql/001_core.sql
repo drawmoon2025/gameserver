@@ -59,6 +59,22 @@ CREATE TABLE IF NOT EXISTS timer_job (
   KEY idx_due (shard, fire_at)
 ) ENGINE=InnoDB;
 
+-- The server list. SERVERS seeds it at startup.
+CREATE TABLE IF NOT EXISTS kingdom (
+  id         VARCHAR(32)  NOT NULL PRIMARY KEY,
+  name       VARCHAR(64)  NOT NULL,
+  ws_url     VARCHAR(255) NOT NULL,
+  capacity   INT          NOT NULL,
+  population INT          NOT NULL DEFAULT 0
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS player_kingdom (
+  uid     BIGINT      NOT NULL PRIMARY KEY, -- One kingdom per player.
+  kingdom VARCHAR(32) NOT NULL,
+  x       INT         NOT NULL,
+  y       INT         NOT NULL
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS slg_march (
   id        BIGINT      NOT NULL PRIMARY KEY,
   kingdom   VARCHAR(32) NOT NULL,
@@ -71,6 +87,7 @@ CREATE TABLE IF NOT EXISTS slg_march (
   troops    BIGINT      NOT NULL,
   arrive_at DATETIME(3) NOT NULL,
   state     TINYINT     NOT NULL DEFAULT 0, -- 0 marching, 1 arrived
+  home      TINYINT(1)  NOT NULL DEFAULT 0, -- A recalled army going back to its city.
   KEY idx_uid (uid, state),
   UNIQUE KEY uk_request (uid, request_id)
 ) ENGINE=InnoDB;
@@ -88,7 +105,9 @@ CREATE TABLE IF NOT EXISTS slg_tile (
 CREATE TABLE IF NOT EXISTS city_state (
   uid     BIGINT      NOT NULL PRIMARY KEY,
   gold    BIGINT      NOT NULL,
-  gold_at DATETIME(3) NOT NULL
+  gold_at DATETIME(3) NOT NULL,
+  troops  BIGINT      NOT NULL DEFAULT 0,
+  CONSTRAINT chk_troops CHECK (troops >= 0)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS city_building (
@@ -103,6 +122,17 @@ CREATE TABLE IF NOT EXISTS city_upgrade (
   uid        BIGINT      NOT NULL,
   kind       VARCHAR(16) NOT NULL,
   to_level   INT         NOT NULL,
+  request_id VARCHAR(64) NOT NULL,
+  finish_at  DATETIME(3) NOT NULL,
+  state      TINYINT     NOT NULL DEFAULT 0, -- 0 in progress, 1 done
+  UNIQUE KEY uk_request (uid, request_id),
+  KEY idx_uid (uid, state)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS city_training (
+  id         BIGINT      NOT NULL PRIMARY KEY,
+  uid        BIGINT      NOT NULL,
+  count      BIGINT      NOT NULL,
   request_id VARCHAR(64) NOT NULL,
   finish_at  DATETIME(3) NOT NULL,
   state      TINYINT     NOT NULL DEFAULT 0, -- 0 in progress, 1 done

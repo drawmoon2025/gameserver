@@ -39,6 +39,7 @@ import (
 	"github.com/yourname/gameserver/internal/gateway"
 	"github.com/yourname/gameserver/internal/mail"
 	"github.com/yourname/gameserver/internal/rank"
+	"github.com/yourname/gameserver/internal/realm"
 	"github.com/yourname/gameserver/internal/room"
 	"github.com/yourname/gameserver/internal/slg"
 	"github.com/yourname/gameserver/internal/slots"
@@ -74,6 +75,7 @@ type deps struct {
 	allies   alliance.Store
 	chats    chat.Store
 	boards   rank.Store
+	realms   realm.Store
 	outboxes []events.Store
 	etcd     *clientv3.Client // Nil means a single node per stateful service.
 }
@@ -115,8 +117,10 @@ func build() (*deps, error) {
 		d.accounts = auth.NewMemoryAccounts()
 		d.wallet = wallet.NewMemory(outbox)
 		d.timers = timers
-		d.marches = slg.NewMemoryStore(timers)
-		d.cities = city.NewMemory(timers)
+		cities := city.NewMemory(timers)
+		d.marches = slg.NewMemoryStore(timers, cities)
+		d.cities = cities
+		d.realms = realm.NewMemory()
 		d.mails = mail.NewMemory(timers)
 		d.allies = alliance.NewMemory(timers)
 		d.outboxes = []events.Store{outbox}
@@ -147,6 +151,7 @@ func build() (*deps, error) {
 	d.cities = &city.MySQL{DB: dbs[0]}
 	d.mails = &mail.MySQL{DB: dbs[0]}
 	d.allies = &alliance.MySQL{DB: dbs[0]}
+	d.realms = &realm.MySQL{DB: dbs[0]}
 	return d, nil
 }
 
@@ -303,6 +308,16 @@ func run() error {
 		mux := http.NewServeMux()
 		(&account.Service{Local: local, Providers: providers, Accounts: d.accounts,
 			Signer: d.signer, Epochs: d.epochs, IDs: d.ids}).Routes(mux)
+		servers, err := realm.ParseServers(env("SERVERS", "k1|Kingdom 1|ws://localhost:8080/ws|100000"))
+		if err != nil {
+			return err
+		}
+		for _, s := range servers {
+			if err := d.realms.Put(ctx, s); err != nil {
+				return fmt.Errorf("seed server %s: %w", s.ID, err)
+			}
+		}
+		(&realm.Service{Store: d.realms, Signer: d.signer, Epochs: d.epochs}).Routes(mux)
 		serveHTTP(ctx, "account", env("ACCOUNT_ADDR", ":8081"), mux)
 	}
 	if on("slots") {
@@ -328,7 +343,7 @@ func run() error {
 	}
 	if on("world") {
 		timers, hooks := timed("world", 0)
-		w := slg.New(slg.Config{Store: d.marches, Timers: timers, IDs: d.ids})
+		w := slg.New(slg.Config{Store: d.marches, Timers: timers, IDs: d.ids, MemberOf: d.realms.MemberOf})
 		if err := runGame(ctx, stop, &wg, d, "world", env("WORLD_ADDR", ":9002"), w.Factory, hooks); err != nil {
 			return err
 		}
@@ -357,7 +372,7 @@ func run() error {
 	}
 	if on("chat") {
 		timers, hooks := timed("chat", chat.ShardBase)
-		c := chat.New(chat.Config{Store: d.chats, Timers: timers, IDs: d.ids, AllianceOf: d.allies.AllianceOf})
+		c := chat.New(chat.Config{Store: d.chats, Timers: timers, IDs: d.ids, AllianceOf: d.allies.AllianceOf, MemberOf: d.realms.MemberOf})
 		if err := runGame(ctx, stop, &wg, d, "chat", env("CHAT_ADDR", ":9006"), c.Factory, hooks); err != nil {
 			return err
 		}

@@ -37,10 +37,17 @@ const (
 	MsgId_MSG_ID_MARCH_REQ           MsgId = 3001
 	MsgId_MSG_ID_MARCH_RSP           MsgId = 3002
 	MsgId_MSG_ID_MARCH_ARRIVED       MsgId = 3003
+	MsgId_MSG_ID_WORLD_SNAPSHOT      MsgId = 3004
+	MsgId_MSG_ID_MAP_VIEW_REQ        MsgId = 3005
+	MsgId_MSG_ID_MAP_VIEW_RSP        MsgId = 3006
+	MsgId_MSG_ID_RECALL_REQ          MsgId = 3007 // Answered by MSG_ID_MARCH_RSP.
 	MsgId_MSG_ID_CITY_UPGRADE_REQ    MsgId = 4001
 	MsgId_MSG_ID_CITY_UPGRADE_RSP    MsgId = 4002
 	MsgId_MSG_ID_CITY_UPGRADED       MsgId = 4003
 	MsgId_MSG_ID_CITY_SNAPSHOT       MsgId = 4004
+	MsgId_MSG_ID_CITY_TRAIN_REQ      MsgId = 4005
+	MsgId_MSG_ID_CITY_TRAIN_RSP      MsgId = 4006
+	MsgId_MSG_ID_CITY_TRAINED        MsgId = 4007
 	MsgId_MSG_ID_MAIL_CLAIM_REQ      MsgId = 5001
 	MsgId_MSG_ID_MAIL_CLAIM_RSP      MsgId = 5002
 	MsgId_MSG_ID_MAIL_NEW            MsgId = 5003
@@ -76,10 +83,17 @@ var (
 		3001: "MSG_ID_MARCH_REQ",
 		3002: "MSG_ID_MARCH_RSP",
 		3003: "MSG_ID_MARCH_ARRIVED",
+		3004: "MSG_ID_WORLD_SNAPSHOT",
+		3005: "MSG_ID_MAP_VIEW_REQ",
+		3006: "MSG_ID_MAP_VIEW_RSP",
+		3007: "MSG_ID_RECALL_REQ",
 		4001: "MSG_ID_CITY_UPGRADE_REQ",
 		4002: "MSG_ID_CITY_UPGRADE_RSP",
 		4003: "MSG_ID_CITY_UPGRADED",
 		4004: "MSG_ID_CITY_SNAPSHOT",
+		4005: "MSG_ID_CITY_TRAIN_REQ",
+		4006: "MSG_ID_CITY_TRAIN_RSP",
+		4007: "MSG_ID_CITY_TRAINED",
 		5001: "MSG_ID_MAIL_CLAIM_REQ",
 		5002: "MSG_ID_MAIL_CLAIM_RSP",
 		5003: "MSG_ID_MAIL_NEW",
@@ -112,10 +126,17 @@ var (
 		"MSG_ID_MARCH_REQ":           3001,
 		"MSG_ID_MARCH_RSP":           3002,
 		"MSG_ID_MARCH_ARRIVED":       3003,
+		"MSG_ID_WORLD_SNAPSHOT":      3004,
+		"MSG_ID_MAP_VIEW_REQ":        3005,
+		"MSG_ID_MAP_VIEW_RSP":        3006,
+		"MSG_ID_RECALL_REQ":          3007,
 		"MSG_ID_CITY_UPGRADE_REQ":    4001,
 		"MSG_ID_CITY_UPGRADE_RSP":    4002,
 		"MSG_ID_CITY_UPGRADED":       4003,
 		"MSG_ID_CITY_SNAPSHOT":       4004,
+		"MSG_ID_CITY_TRAIN_REQ":      4005,
+		"MSG_ID_CITY_TRAIN_RSP":      4006,
+		"MSG_ID_CITY_TRAINED":        4007,
 		"MSG_ID_MAIL_CLAIM_REQ":      5001,
 		"MSG_ID_MAIL_CLAIM_RSP":      5002,
 		"MSG_ID_MAIL_NEW":            5003,
@@ -174,6 +195,7 @@ const (
 	ErrorCode_ERROR_CODE_DUPLICATE_IN_PROGRESS ErrorCode = 5
 	ErrorCode_ERROR_CODE_INTERNAL              ErrorCode = 6
 	ErrorCode_ERROR_CODE_BUSY                  ErrorCode = 7
+	ErrorCode_ERROR_CODE_NOT_ENOUGH_TROOPS     ErrorCode = 8
 )
 
 // Enum value maps for ErrorCode.
@@ -187,6 +209,7 @@ var (
 		5: "ERROR_CODE_DUPLICATE_IN_PROGRESS",
 		6: "ERROR_CODE_INTERNAL",
 		7: "ERROR_CODE_BUSY",
+		8: "ERROR_CODE_NOT_ENOUGH_TROOPS",
 	}
 	ErrorCode_value = map[string]int32{
 		"ERROR_CODE_OK":                    0,
@@ -197,6 +220,7 @@ var (
 		"ERROR_CODE_DUPLICATE_IN_PROGRESS": 5,
 		"ERROR_CODE_INTERNAL":              6,
 		"ERROR_CODE_BUSY":                  7,
+		"ERROR_CODE_NOT_ENOUGH_TROOPS":     8,
 	}
 )
 
@@ -564,6 +588,239 @@ func (x *LoginRsp) GetExpiresAtMs() int64 {
 	return 0
 }
 
+// ServerInfo is one kingdom in the HTTP server list.
+type ServerInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	WsUrl         string                 `protobuf:"bytes,3,opt,name=ws_url,json=wsUrl,proto3" json:"ws_url,omitempty"` // Where to open the WebSocket.
+	Full          bool                   `protobuf:"varint,4,opt,name=full,proto3" json:"full,omitempty"`
+	Load          int32                  `protobuf:"varint,5,opt,name=load,proto3" json:"load,omitempty"` // Population as a percentage of capacity.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ServerInfo) Reset() {
+	*x = ServerInfo{}
+	mi := &file_game_v1_envelope_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServerInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServerInfo) ProtoMessage() {}
+
+func (x *ServerInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServerInfo.ProtoReflect.Descriptor instead.
+func (*ServerInfo) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ServerInfo) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ServerInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ServerInfo) GetWsUrl() string {
+	if x != nil {
+		return x.WsUrl
+	}
+	return ""
+}
+
+func (x *ServerInfo) GetFull() bool {
+	if x != nil {
+		return x.Full
+	}
+	return false
+}
+
+func (x *ServerInfo) GetLoad() int32 {
+	if x != nil {
+		return x.Load
+	}
+	return 0
+}
+
+type ServerList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Servers       []*ServerInfo          `protobuf:"bytes,1,rep,name=servers,proto3" json:"servers,omitempty"`
+	Current       string                 `protobuf:"bytes,2,opt,name=current,proto3" json:"current,omitempty"` // This player's kingdom; empty before the first entry.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ServerList) Reset() {
+	*x = ServerList{}
+	mi := &file_game_v1_envelope_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServerList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServerList) ProtoMessage() {}
+
+func (x *ServerList) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServerList.ProtoReflect.Descriptor instead.
+func (*ServerList) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ServerList) GetServers() []*ServerInfo {
+	if x != nil {
+		return x.Servers
+	}
+	return nil
+}
+
+func (x *ServerList) GetCurrent() string {
+	if x != nil {
+		return x.Current
+	}
+	return ""
+}
+
+type EnterServerReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnterServerReq) Reset() {
+	*x = EnterServerReq{}
+	mi := &file_game_v1_envelope_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnterServerReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnterServerReq) ProtoMessage() {}
+
+func (x *EnterServerReq) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnterServerReq.ProtoReflect.Descriptor instead.
+func (*EnterServerReq) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *EnterServerReq) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type EnterServerRsp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Server        *ServerInfo            `protobuf:"bytes,1,opt,name=server,proto3" json:"server,omitempty"`
+	BaseX         int32                  `protobuf:"varint,2,opt,name=base_x,json=baseX,proto3" json:"base_x,omitempty"`
+	BaseY         int32                  `protobuf:"varint,3,opt,name=base_y,json=baseY,proto3" json:"base_y,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnterServerRsp) Reset() {
+	*x = EnterServerRsp{}
+	mi := &file_game_v1_envelope_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnterServerRsp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnterServerRsp) ProtoMessage() {}
+
+func (x *EnterServerRsp) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnterServerRsp.ProtoReflect.Descriptor instead.
+func (*EnterServerRsp) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *EnterServerRsp) GetServer() *ServerInfo {
+	if x != nil {
+		return x.Server
+	}
+	return nil
+}
+
+func (x *EnterServerRsp) GetBaseX() int32 {
+	if x != nil {
+		return x.BaseX
+	}
+	return 0
+}
+
+func (x *EnterServerRsp) GetBaseY() int32 {
+	if x != nil {
+		return x.BaseY
+	}
+	return 0
+}
+
 type ResumeRsp struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Replayed      bool                   `protobuf:"varint,1,opt,name=replayed,proto3" json:"replayed,omitempty"` // true: missed frames follow; false: a snapshot follows.
@@ -574,7 +831,7 @@ type ResumeRsp struct {
 
 func (x *ResumeRsp) Reset() {
 	*x = ResumeRsp{}
-	mi := &file_game_v1_envelope_proto_msgTypes[5]
+	mi := &file_game_v1_envelope_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -586,7 +843,7 @@ func (x *ResumeRsp) String() string {
 func (*ResumeRsp) ProtoMessage() {}
 
 func (x *ResumeRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[5]
+	mi := &file_game_v1_envelope_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -599,7 +856,7 @@ func (x *ResumeRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeRsp.ProtoReflect.Descriptor instead.
 func (*ResumeRsp) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{5}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ResumeRsp) GetReplayed() bool {
@@ -625,7 +882,7 @@ type Kick struct {
 
 func (x *Kick) Reset() {
 	*x = Kick{}
-	mi := &file_game_v1_envelope_proto_msgTypes[6]
+	mi := &file_game_v1_envelope_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -637,7 +894,7 @@ func (x *Kick) String() string {
 func (*Kick) ProtoMessage() {}
 
 func (x *Kick) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[6]
+	mi := &file_game_v1_envelope_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -650,7 +907,7 @@ func (x *Kick) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Kick.ProtoReflect.Descriptor instead.
 func (*Kick) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{6}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Kick) GetReason() string {
@@ -669,7 +926,7 @@ type RoomActionReq struct {
 
 func (x *RoomActionReq) Reset() {
 	*x = RoomActionReq{}
-	mi := &file_game_v1_envelope_proto_msgTypes[7]
+	mi := &file_game_v1_envelope_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -681,7 +938,7 @@ func (x *RoomActionReq) String() string {
 func (*RoomActionReq) ProtoMessage() {}
 
 func (x *RoomActionReq) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[7]
+	mi := &file_game_v1_envelope_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -694,7 +951,7 @@ func (x *RoomActionReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoomActionReq.ProtoReflect.Descriptor instead.
 func (*RoomActionReq) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{7}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *RoomActionReq) GetDelta() int32 {
@@ -713,7 +970,7 @@ type RoomActionRsp struct {
 
 func (x *RoomActionRsp) Reset() {
 	*x = RoomActionRsp{}
-	mi := &file_game_v1_envelope_proto_msgTypes[8]
+	mi := &file_game_v1_envelope_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -725,7 +982,7 @@ func (x *RoomActionRsp) String() string {
 func (*RoomActionRsp) ProtoMessage() {}
 
 func (x *RoomActionRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[8]
+	mi := &file_game_v1_envelope_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -738,7 +995,7 @@ func (x *RoomActionRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoomActionRsp.ProtoReflect.Descriptor instead.
 func (*RoomActionRsp) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{8}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *RoomActionRsp) GetValue() int64 {
@@ -759,7 +1016,7 @@ type RoomSnapshot struct {
 
 func (x *RoomSnapshot) Reset() {
 	*x = RoomSnapshot{}
-	mi := &file_game_v1_envelope_proto_msgTypes[9]
+	mi := &file_game_v1_envelope_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -771,7 +1028,7 @@ func (x *RoomSnapshot) String() string {
 func (*RoomSnapshot) ProtoMessage() {}
 
 func (x *RoomSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[9]
+	mi := &file_game_v1_envelope_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -784,7 +1041,7 @@ func (x *RoomSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RoomSnapshot.ProtoReflect.Descriptor instead.
 func (*RoomSnapshot) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{9}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *RoomSnapshot) GetRoomId() string {
@@ -817,7 +1074,7 @@ type SpinReq struct {
 
 func (x *SpinReq) Reset() {
 	*x = SpinReq{}
-	mi := &file_game_v1_envelope_proto_msgTypes[10]
+	mi := &file_game_v1_envelope_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -829,7 +1086,7 @@ func (x *SpinReq) String() string {
 func (*SpinReq) ProtoMessage() {}
 
 func (x *SpinReq) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[10]
+	mi := &file_game_v1_envelope_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -842,7 +1099,7 @@ func (x *SpinReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpinReq.ProtoReflect.Descriptor instead.
 func (*SpinReq) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{10}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SpinReq) GetBet() int64 {
@@ -864,7 +1121,7 @@ type SpinRsp struct {
 
 func (x *SpinRsp) Reset() {
 	*x = SpinRsp{}
-	mi := &file_game_v1_envelope_proto_msgTypes[11]
+	mi := &file_game_v1_envelope_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -876,7 +1133,7 @@ func (x *SpinRsp) String() string {
 func (*SpinRsp) ProtoMessage() {}
 
 func (x *SpinRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[11]
+	mi := &file_game_v1_envelope_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -889,7 +1146,7 @@ func (x *SpinRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpinRsp.ProtoReflect.Descriptor instead.
 func (*SpinRsp) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{11}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SpinRsp) GetReels() []int32 {
@@ -931,7 +1188,7 @@ type MarchReq struct {
 
 func (x *MarchReq) Reset() {
 	*x = MarchReq{}
-	mi := &file_game_v1_envelope_proto_msgTypes[12]
+	mi := &file_game_v1_envelope_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -943,7 +1200,7 @@ func (x *MarchReq) String() string {
 func (*MarchReq) ProtoMessage() {}
 
 func (x *MarchReq) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[12]
+	mi := &file_game_v1_envelope_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -956,7 +1213,7 @@ func (x *MarchReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarchReq.ProtoReflect.Descriptor instead.
 func (*MarchReq) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{12}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *MarchReq) GetToX() int32 {
@@ -990,7 +1247,7 @@ type MarchRsp struct {
 
 func (x *MarchRsp) Reset() {
 	*x = MarchRsp{}
-	mi := &file_game_v1_envelope_proto_msgTypes[13]
+	mi := &file_game_v1_envelope_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1002,7 +1259,7 @@ func (x *MarchRsp) String() string {
 func (*MarchRsp) ProtoMessage() {}
 
 func (x *MarchRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[13]
+	mi := &file_game_v1_envelope_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1015,7 +1272,7 @@ func (x *MarchRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarchRsp.ProtoReflect.Descriptor instead.
 func (*MarchRsp) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{13}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *MarchRsp) GetMarchId() uint64 {
@@ -1038,13 +1295,14 @@ type MarchArrived struct {
 	X             int32                  `protobuf:"varint,2,opt,name=x,proto3" json:"x,omitempty"`
 	Y             int32                  `protobuf:"varint,3,opt,name=y,proto3" json:"y,omitempty"`
 	Troops        int64                  `protobuf:"varint,4,opt,name=troops,proto3" json:"troops,omitempty"` // Those left after any battle.
+	Home          bool                   `protobuf:"varint,5,opt,name=home,proto3" json:"home,omitempty"`     // A recalled army reached the city.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MarchArrived) Reset() {
 	*x = MarchArrived{}
-	mi := &file_game_v1_envelope_proto_msgTypes[14]
+	mi := &file_game_v1_envelope_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1056,7 +1314,7 @@ func (x *MarchArrived) String() string {
 func (*MarchArrived) ProtoMessage() {}
 
 func (x *MarchArrived) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[14]
+	mi := &file_game_v1_envelope_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1069,7 +1327,7 @@ func (x *MarchArrived) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarchArrived.ProtoReflect.Descriptor instead.
 func (*MarchArrived) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{14}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *MarchArrived) GetMarchId() uint64 {
@@ -1100,6 +1358,416 @@ func (x *MarchArrived) GetTroops() int64 {
 	return 0
 }
 
+func (x *MarchArrived) GetHome() bool {
+	if x != nil {
+		return x.Home
+	}
+	return false
+}
+
+// MarchInfo is an army on the road.
+type MarchInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MarchId       uint64                 `protobuf:"varint,1,opt,name=march_id,json=marchId,proto3" json:"march_id,omitempty"`
+	ToX           int32                  `protobuf:"varint,2,opt,name=to_x,json=toX,proto3" json:"to_x,omitempty"`
+	ToY           int32                  `protobuf:"varint,3,opt,name=to_y,json=toY,proto3" json:"to_y,omitempty"`
+	Troops        int64                  `protobuf:"varint,4,opt,name=troops,proto3" json:"troops,omitempty"`
+	ArriveAtMs    int64                  `protobuf:"varint,5,opt,name=arrive_at_ms,json=arriveAtMs,proto3" json:"arrive_at_ms,omitempty"`
+	Home          bool                   `protobuf:"varint,6,opt,name=home,proto3" json:"home,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MarchInfo) Reset() {
+	*x = MarchInfo{}
+	mi := &file_game_v1_envelope_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MarchInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MarchInfo) ProtoMessage() {}
+
+func (x *MarchInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MarchInfo.ProtoReflect.Descriptor instead.
+func (*MarchInfo) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *MarchInfo) GetMarchId() uint64 {
+	if x != nil {
+		return x.MarchId
+	}
+	return 0
+}
+
+func (x *MarchInfo) GetToX() int32 {
+	if x != nil {
+		return x.ToX
+	}
+	return 0
+}
+
+func (x *MarchInfo) GetToY() int32 {
+	if x != nil {
+		return x.ToY
+	}
+	return 0
+}
+
+func (x *MarchInfo) GetTroops() int64 {
+	if x != nil {
+		return x.Troops
+	}
+	return 0
+}
+
+func (x *MarchInfo) GetArriveAtMs() int64 {
+	if x != nil {
+		return x.ArriveAtMs
+	}
+	return 0
+}
+
+func (x *MarchInfo) GetHome() bool {
+	if x != nil {
+		return x.Home
+	}
+	return false
+}
+
+type Tile struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	X             int32                  `protobuf:"varint,1,opt,name=x,proto3" json:"x,omitempty"`
+	Y             int32                  `protobuf:"varint,2,opt,name=y,proto3" json:"y,omitempty"`
+	Uid           int64                  `protobuf:"varint,3,opt,name=uid,proto3" json:"uid,omitempty"`
+	Troops        int64                  `protobuf:"varint,4,opt,name=troops,proto3" json:"troops,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Tile) Reset() {
+	*x = Tile{}
+	mi := &file_game_v1_envelope_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Tile) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Tile) ProtoMessage() {}
+
+func (x *Tile) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Tile.ProtoReflect.Descriptor instead.
+func (*Tile) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *Tile) GetX() int32 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *Tile) GetY() int32 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+func (x *Tile) GetUid() int64 {
+	if x != nil {
+		return x.Uid
+	}
+	return 0
+}
+
+func (x *Tile) GetTroops() int64 {
+	if x != nil {
+		return x.Troops
+	}
+	return 0
+}
+
+type WorldSnapshot struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kingdom       string                 `protobuf:"bytes,1,opt,name=kingdom,proto3" json:"kingdom,omitempty"`
+	BaseX         int32                  `protobuf:"varint,2,opt,name=base_x,json=baseX,proto3" json:"base_x,omitempty"`
+	BaseY         int32                  `protobuf:"varint,3,opt,name=base_y,json=baseY,proto3" json:"base_y,omitempty"`
+	MapSize       int32                  `protobuf:"varint,4,opt,name=map_size,json=mapSize,proto3" json:"map_size,omitempty"`
+	Troops        int64                  `protobuf:"varint,5,opt,name=troops,proto3" json:"troops,omitempty"` // Held on tiles, summed over all of them.
+	Tiles         []*Tile                `protobuf:"bytes,6,rep,name=tiles,proto3" json:"tiles,omitempty"`    // This player's, up to the first 1000.
+	Marches       []*MarchInfo           `protobuf:"bytes,7,rep,name=marches,proto3" json:"marches,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WorldSnapshot) Reset() {
+	*x = WorldSnapshot{}
+	mi := &file_game_v1_envelope_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WorldSnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WorldSnapshot) ProtoMessage() {}
+
+func (x *WorldSnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WorldSnapshot.ProtoReflect.Descriptor instead.
+func (*WorldSnapshot) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *WorldSnapshot) GetKingdom() string {
+	if x != nil {
+		return x.Kingdom
+	}
+	return ""
+}
+
+func (x *WorldSnapshot) GetBaseX() int32 {
+	if x != nil {
+		return x.BaseX
+	}
+	return 0
+}
+
+func (x *WorldSnapshot) GetBaseY() int32 {
+	if x != nil {
+		return x.BaseY
+	}
+	return 0
+}
+
+func (x *WorldSnapshot) GetMapSize() int32 {
+	if x != nil {
+		return x.MapSize
+	}
+	return 0
+}
+
+func (x *WorldSnapshot) GetTroops() int64 {
+	if x != nil {
+		return x.Troops
+	}
+	return 0
+}
+
+func (x *WorldSnapshot) GetTiles() []*Tile {
+	if x != nil {
+		return x.Tiles
+	}
+	return nil
+}
+
+func (x *WorldSnapshot) GetMarches() []*MarchInfo {
+	if x != nil {
+		return x.Marches
+	}
+	return nil
+}
+
+// MapViewReq asks for the tiles around a point. It is a read, not a subscription.
+type MapViewReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	X             int32                  `protobuf:"varint,1,opt,name=x,proto3" json:"x,omitempty"`
+	Y             int32                  `protobuf:"varint,2,opt,name=y,proto3" json:"y,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MapViewReq) Reset() {
+	*x = MapViewReq{}
+	mi := &file_game_v1_envelope_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MapViewReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MapViewReq) ProtoMessage() {}
+
+func (x *MapViewReq) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MapViewReq.ProtoReflect.Descriptor instead.
+func (*MapViewReq) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *MapViewReq) GetX() int32 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *MapViewReq) GetY() int32 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+type MapViewRsp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Tiles         []*Tile                `protobuf:"bytes,1,rep,name=tiles,proto3" json:"tiles,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MapViewRsp) Reset() {
+	*x = MapViewRsp{}
+	mi := &file_game_v1_envelope_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MapViewRsp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MapViewRsp) ProtoMessage() {}
+
+func (x *MapViewRsp) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MapViewRsp.ProtoReflect.Descriptor instead.
+func (*MapViewRsp) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *MapViewRsp) GetTiles() []*Tile {
+	if x != nil {
+		return x.Tiles
+	}
+	return nil
+}
+
+// RecallReq sends troops from a held tile back to the city.
+type RecallReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	X             int32                  `protobuf:"varint,1,opt,name=x,proto3" json:"x,omitempty"`
+	Y             int32                  `protobuf:"varint,2,opt,name=y,proto3" json:"y,omitempty"`
+	Troops        int64                  `protobuf:"varint,3,opt,name=troops,proto3" json:"troops,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RecallReq) Reset() {
+	*x = RecallReq{}
+	mi := &file_game_v1_envelope_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RecallReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RecallReq) ProtoMessage() {}
+
+func (x *RecallReq) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RecallReq.ProtoReflect.Descriptor instead.
+func (*RecallReq) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *RecallReq) GetX() int32 {
+	if x != nil {
+		return x.X
+	}
+	return 0
+}
+
+func (x *RecallReq) GetY() int32 {
+	if x != nil {
+		return x.Y
+	}
+	return 0
+}
+
+func (x *RecallReq) GetTroops() int64 {
+	if x != nil {
+		return x.Troops
+	}
+	return 0
+}
+
 type Building struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
@@ -1110,7 +1778,7 @@ type Building struct {
 
 func (x *Building) Reset() {
 	*x = Building{}
-	mi := &file_game_v1_envelope_proto_msgTypes[15]
+	mi := &file_game_v1_envelope_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1122,7 +1790,7 @@ func (x *Building) String() string {
 func (*Building) ProtoMessage() {}
 
 func (x *Building) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[15]
+	mi := &file_game_v1_envelope_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1135,7 +1803,7 @@ func (x *Building) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Building.ProtoReflect.Descriptor instead.
 func (*Building) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{15}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Building) GetKind() string {
@@ -1164,7 +1832,7 @@ type CityUpgrade struct {
 
 func (x *CityUpgrade) Reset() {
 	*x = CityUpgrade{}
-	mi := &file_game_v1_envelope_proto_msgTypes[16]
+	mi := &file_game_v1_envelope_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1176,7 +1844,7 @@ func (x *CityUpgrade) String() string {
 func (*CityUpgrade) ProtoMessage() {}
 
 func (x *CityUpgrade) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[16]
+	mi := &file_game_v1_envelope_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1189,7 +1857,7 @@ func (x *CityUpgrade) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CityUpgrade.ProtoReflect.Descriptor instead.
 func (*CityUpgrade) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{16}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *CityUpgrade) GetUpgradeId() uint64 {
@@ -1220,18 +1888,80 @@ func (x *CityUpgrade) GetFinishAtMs() int64 {
 	return 0
 }
 
+type CityTraining struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TrainingId    uint64                 `protobuf:"varint,1,opt,name=training_id,json=trainingId,proto3" json:"training_id,omitempty"`
+	Count         int64                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	FinishAtMs    int64                  `protobuf:"varint,3,opt,name=finish_at_ms,json=finishAtMs,proto3" json:"finish_at_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CityTraining) Reset() {
+	*x = CityTraining{}
+	mi := &file_game_v1_envelope_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CityTraining) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CityTraining) ProtoMessage() {}
+
+func (x *CityTraining) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CityTraining.ProtoReflect.Descriptor instead.
+func (*CityTraining) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *CityTraining) GetTrainingId() uint64 {
+	if x != nil {
+		return x.TrainingId
+	}
+	return 0
+}
+
+func (x *CityTraining) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *CityTraining) GetFinishAtMs() int64 {
+	if x != nil {
+		return x.FinishAtMs
+	}
+	return 0
+}
+
 type CitySnapshot struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Gold          int64                  `protobuf:"varint,1,opt,name=gold,proto3" json:"gold,omitempty"`
 	Buildings     []*Building            `protobuf:"bytes,2,rep,name=buildings,proto3" json:"buildings,omitempty"`
 	Upgrades      []*CityUpgrade         `protobuf:"bytes,3,rep,name=upgrades,proto3" json:"upgrades,omitempty"`
+	Troops        int64                  `protobuf:"varint,4,opt,name=troops,proto3" json:"troops,omitempty"` // Ready in the city.
+	Training      []*CityTraining        `protobuf:"bytes,5,rep,name=training,proto3" json:"training,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CitySnapshot) Reset() {
 	*x = CitySnapshot{}
-	mi := &file_game_v1_envelope_proto_msgTypes[17]
+	mi := &file_game_v1_envelope_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1243,7 +1973,7 @@ func (x *CitySnapshot) String() string {
 func (*CitySnapshot) ProtoMessage() {}
 
 func (x *CitySnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[17]
+	mi := &file_game_v1_envelope_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1256,7 +1986,7 @@ func (x *CitySnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CitySnapshot.ProtoReflect.Descriptor instead.
 func (*CitySnapshot) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{17}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *CitySnapshot) GetGold() int64 {
@@ -1280,6 +2010,160 @@ func (x *CitySnapshot) GetUpgrades() []*CityUpgrade {
 	return nil
 }
 
+func (x *CitySnapshot) GetTroops() int64 {
+	if x != nil {
+		return x.Troops
+	}
+	return 0
+}
+
+func (x *CitySnapshot) GetTraining() []*CityTraining {
+	if x != nil {
+		return x.Training
+	}
+	return nil
+}
+
+type CityTrainReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Count         int64                  `protobuf:"varint,1,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CityTrainReq) Reset() {
+	*x = CityTrainReq{}
+	mi := &file_game_v1_envelope_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CityTrainReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CityTrainReq) ProtoMessage() {}
+
+func (x *CityTrainReq) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CityTrainReq.ProtoReflect.Descriptor instead.
+func (*CityTrainReq) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *CityTrainReq) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+type CityTrainRsp struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Training      *CityTraining          `protobuf:"bytes,1,opt,name=training,proto3" json:"training,omitempty"`
+	Gold          int64                  `protobuf:"varint,2,opt,name=gold,proto3" json:"gold,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CityTrainRsp) Reset() {
+	*x = CityTrainRsp{}
+	mi := &file_game_v1_envelope_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CityTrainRsp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CityTrainRsp) ProtoMessage() {}
+
+func (x *CityTrainRsp) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CityTrainRsp.ProtoReflect.Descriptor instead.
+func (*CityTrainRsp) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *CityTrainRsp) GetTraining() *CityTraining {
+	if x != nil {
+		return x.Training
+	}
+	return nil
+}
+
+func (x *CityTrainRsp) GetGold() int64 {
+	if x != nil {
+		return x.Gold
+	}
+	return 0
+}
+
+type CityTrained struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Count         int64                  `protobuf:"varint,1,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CityTrained) Reset() {
+	*x = CityTrained{}
+	mi := &file_game_v1_envelope_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CityTrained) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CityTrained) ProtoMessage() {}
+
+func (x *CityTrained) ProtoReflect() protoreflect.Message {
+	mi := &file_game_v1_envelope_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CityTrained.ProtoReflect.Descriptor instead.
+func (*CityTrained) Descriptor() ([]byte, []int) {
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *CityTrained) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
 type CityUpgradeReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
@@ -1289,7 +2173,7 @@ type CityUpgradeReq struct {
 
 func (x *CityUpgradeReq) Reset() {
 	*x = CityUpgradeReq{}
-	mi := &file_game_v1_envelope_proto_msgTypes[18]
+	mi := &file_game_v1_envelope_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1301,7 +2185,7 @@ func (x *CityUpgradeReq) String() string {
 func (*CityUpgradeReq) ProtoMessage() {}
 
 func (x *CityUpgradeReq) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[18]
+	mi := &file_game_v1_envelope_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1314,7 +2198,7 @@ func (x *CityUpgradeReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CityUpgradeReq.ProtoReflect.Descriptor instead.
 func (*CityUpgradeReq) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{18}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *CityUpgradeReq) GetKind() string {
@@ -1334,7 +2218,7 @@ type CityUpgradeRsp struct {
 
 func (x *CityUpgradeRsp) Reset() {
 	*x = CityUpgradeRsp{}
-	mi := &file_game_v1_envelope_proto_msgTypes[19]
+	mi := &file_game_v1_envelope_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1346,7 +2230,7 @@ func (x *CityUpgradeRsp) String() string {
 func (*CityUpgradeRsp) ProtoMessage() {}
 
 func (x *CityUpgradeRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[19]
+	mi := &file_game_v1_envelope_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1359,7 +2243,7 @@ func (x *CityUpgradeRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CityUpgradeRsp.ProtoReflect.Descriptor instead.
 func (*CityUpgradeRsp) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{19}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *CityUpgradeRsp) GetUpgrade() *CityUpgrade {
@@ -1386,7 +2270,7 @@ type CityUpgraded struct {
 
 func (x *CityUpgraded) Reset() {
 	*x = CityUpgraded{}
-	mi := &file_game_v1_envelope_proto_msgTypes[20]
+	mi := &file_game_v1_envelope_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1398,7 +2282,7 @@ func (x *CityUpgraded) String() string {
 func (*CityUpgraded) ProtoMessage() {}
 
 func (x *CityUpgraded) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[20]
+	mi := &file_game_v1_envelope_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1411,7 +2295,7 @@ func (x *CityUpgraded) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CityUpgraded.ProtoReflect.Descriptor instead.
 func (*CityUpgraded) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{20}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *CityUpgraded) GetKind() string {
@@ -1443,7 +2327,7 @@ type Mail struct {
 
 func (x *Mail) Reset() {
 	*x = Mail{}
-	mi := &file_game_v1_envelope_proto_msgTypes[21]
+	mi := &file_game_v1_envelope_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1455,7 +2339,7 @@ func (x *Mail) String() string {
 func (*Mail) ProtoMessage() {}
 
 func (x *Mail) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[21]
+	mi := &file_game_v1_envelope_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1468,7 +2352,7 @@ func (x *Mail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Mail.ProtoReflect.Descriptor instead.
 func (*Mail) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{21}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *Mail) GetMailId() uint64 {
@@ -1529,7 +2413,7 @@ type MailSnapshot struct {
 
 func (x *MailSnapshot) Reset() {
 	*x = MailSnapshot{}
-	mi := &file_game_v1_envelope_proto_msgTypes[22]
+	mi := &file_game_v1_envelope_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1541,7 +2425,7 @@ func (x *MailSnapshot) String() string {
 func (*MailSnapshot) ProtoMessage() {}
 
 func (x *MailSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[22]
+	mi := &file_game_v1_envelope_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1554,7 +2438,7 @@ func (x *MailSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MailSnapshot.ProtoReflect.Descriptor instead.
 func (*MailSnapshot) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{22}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *MailSnapshot) GetMail() []*Mail {
@@ -1573,7 +2457,7 @@ type MailNew struct {
 
 func (x *MailNew) Reset() {
 	*x = MailNew{}
-	mi := &file_game_v1_envelope_proto_msgTypes[23]
+	mi := &file_game_v1_envelope_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1585,7 +2469,7 @@ func (x *MailNew) String() string {
 func (*MailNew) ProtoMessage() {}
 
 func (x *MailNew) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[23]
+	mi := &file_game_v1_envelope_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1598,7 +2482,7 @@ func (x *MailNew) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MailNew.ProtoReflect.Descriptor instead.
 func (*MailNew) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{23}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *MailNew) GetMail() *Mail {
@@ -1617,7 +2501,7 @@ type MailClaimReq struct {
 
 func (x *MailClaimReq) Reset() {
 	*x = MailClaimReq{}
-	mi := &file_game_v1_envelope_proto_msgTypes[24]
+	mi := &file_game_v1_envelope_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1629,7 +2513,7 @@ func (x *MailClaimReq) String() string {
 func (*MailClaimReq) ProtoMessage() {}
 
 func (x *MailClaimReq) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[24]
+	mi := &file_game_v1_envelope_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1642,7 +2526,7 @@ func (x *MailClaimReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MailClaimReq.ProtoReflect.Descriptor instead.
 func (*MailClaimReq) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{24}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *MailClaimReq) GetMailId() uint64 {
@@ -1662,7 +2546,7 @@ type MailClaimRsp struct {
 
 func (x *MailClaimRsp) Reset() {
 	*x = MailClaimRsp{}
-	mi := &file_game_v1_envelope_proto_msgTypes[25]
+	mi := &file_game_v1_envelope_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1674,7 +2558,7 @@ func (x *MailClaimRsp) String() string {
 func (*MailClaimRsp) ProtoMessage() {}
 
 func (x *MailClaimRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[25]
+	mi := &file_game_v1_envelope_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1687,7 +2571,7 @@ func (x *MailClaimRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MailClaimRsp.ProtoReflect.Descriptor instead.
 func (*MailClaimRsp) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{25}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *MailClaimRsp) GetMailId() uint64 {
@@ -1715,7 +2599,7 @@ type AllianceInfo struct {
 
 func (x *AllianceInfo) Reset() {
 	*x = AllianceInfo{}
-	mi := &file_game_v1_envelope_proto_msgTypes[26]
+	mi := &file_game_v1_envelope_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1727,7 +2611,7 @@ func (x *AllianceInfo) String() string {
 func (*AllianceInfo) ProtoMessage() {}
 
 func (x *AllianceInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[26]
+	mi := &file_game_v1_envelope_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1740,7 +2624,7 @@ func (x *AllianceInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AllianceInfo.ProtoReflect.Descriptor instead.
 func (*AllianceInfo) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{26}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *AllianceInfo) GetName() string {
@@ -1773,7 +2657,7 @@ type AllianceKickReq struct {
 
 func (x *AllianceKickReq) Reset() {
 	*x = AllianceKickReq{}
-	mi := &file_game_v1_envelope_proto_msgTypes[27]
+	mi := &file_game_v1_envelope_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1785,7 +2669,7 @@ func (x *AllianceKickReq) String() string {
 func (*AllianceKickReq) ProtoMessage() {}
 
 func (x *AllianceKickReq) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[27]
+	mi := &file_game_v1_envelope_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1798,7 +2682,7 @@ func (x *AllianceKickReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AllianceKickReq.ProtoReflect.Descriptor instead.
 func (*AllianceKickReq) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{27}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *AllianceKickReq) GetUid() int64 {
@@ -1820,7 +2704,7 @@ type ChatMessage struct {
 
 func (x *ChatMessage) Reset() {
 	*x = ChatMessage{}
-	mi := &file_game_v1_envelope_proto_msgTypes[28]
+	mi := &file_game_v1_envelope_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1832,7 +2716,7 @@ func (x *ChatMessage) String() string {
 func (*ChatMessage) ProtoMessage() {}
 
 func (x *ChatMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[28]
+	mi := &file_game_v1_envelope_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1845,7 +2729,7 @@ func (x *ChatMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatMessage.ProtoReflect.Descriptor instead.
 func (*ChatMessage) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{28}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ChatMessage) GetMessageId() uint64 {
@@ -1886,7 +2770,7 @@ type ChatSnapshot struct {
 
 func (x *ChatSnapshot) Reset() {
 	*x = ChatSnapshot{}
-	mi := &file_game_v1_envelope_proto_msgTypes[29]
+	mi := &file_game_v1_envelope_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1898,7 +2782,7 @@ func (x *ChatSnapshot) String() string {
 func (*ChatSnapshot) ProtoMessage() {}
 
 func (x *ChatSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[29]
+	mi := &file_game_v1_envelope_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1911,7 +2795,7 @@ func (x *ChatSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatSnapshot.ProtoReflect.Descriptor instead.
 func (*ChatSnapshot) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{29}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ChatSnapshot) GetChannel() string {
@@ -1937,7 +2821,7 @@ type ChatSendReq struct {
 
 func (x *ChatSendReq) Reset() {
 	*x = ChatSendReq{}
-	mi := &file_game_v1_envelope_proto_msgTypes[30]
+	mi := &file_game_v1_envelope_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1949,7 +2833,7 @@ func (x *ChatSendReq) String() string {
 func (*ChatSendReq) ProtoMessage() {}
 
 func (x *ChatSendReq) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[30]
+	mi := &file_game_v1_envelope_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1962,7 +2846,7 @@ func (x *ChatSendReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatSendReq.ProtoReflect.Descriptor instead.
 func (*ChatSendReq) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{30}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ChatSendReq) GetText() string {
@@ -1982,7 +2866,7 @@ type ChatPush struct {
 
 func (x *ChatPush) Reset() {
 	*x = ChatPush{}
-	mi := &file_game_v1_envelope_proto_msgTypes[31]
+	mi := &file_game_v1_envelope_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1994,7 +2878,7 @@ func (x *ChatPush) String() string {
 func (*ChatPush) ProtoMessage() {}
 
 func (x *ChatPush) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[31]
+	mi := &file_game_v1_envelope_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2007,7 +2891,7 @@ func (x *ChatPush) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChatPush.ProtoReflect.Descriptor instead.
 func (*ChatPush) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{31}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ChatPush) GetChannel() string {
@@ -2035,7 +2919,7 @@ type RankEntry struct {
 
 func (x *RankEntry) Reset() {
 	*x = RankEntry{}
-	mi := &file_game_v1_envelope_proto_msgTypes[32]
+	mi := &file_game_v1_envelope_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2047,7 +2931,7 @@ func (x *RankEntry) String() string {
 func (*RankEntry) ProtoMessage() {}
 
 func (x *RankEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[32]
+	mi := &file_game_v1_envelope_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2060,7 +2944,7 @@ func (x *RankEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RankEntry.ProtoReflect.Descriptor instead.
 func (*RankEntry) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{32}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *RankEntry) GetUid() int64 {
@@ -2096,7 +2980,7 @@ type RankBoard struct {
 
 func (x *RankBoard) Reset() {
 	*x = RankBoard{}
-	mi := &file_game_v1_envelope_proto_msgTypes[33]
+	mi := &file_game_v1_envelope_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2108,7 +2992,7 @@ func (x *RankBoard) String() string {
 func (*RankBoard) ProtoMessage() {}
 
 func (x *RankBoard) ProtoReflect() protoreflect.Message {
-	mi := &file_game_v1_envelope_proto_msgTypes[33]
+	mi := &file_game_v1_envelope_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2121,7 +3005,7 @@ func (x *RankBoard) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RankBoard.ProtoReflect.Descriptor instead.
 func (*RankBoard) Descriptor() ([]byte, []int) {
-	return file_game_v1_envelope_proto_rawDescGZIP(), []int{33}
+	return file_game_v1_envelope_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *RankBoard) GetBoard() string {
@@ -2185,7 +3069,24 @@ const file_game_v1_envelope_proto_rawDesc = "" +
 	"\bLoginRsp\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x10\n" +
 	"\x03uid\x18\x02 \x01(\x03R\x03uid\x12\"\n" +
-	"\rexpires_at_ms\x18\x03 \x01(\x03R\vexpiresAtMs\"B\n" +
+	"\rexpires_at_ms\x18\x03 \x01(\x03R\vexpiresAtMs\"o\n" +
+	"\n" +
+	"ServerInfo\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x15\n" +
+	"\x06ws_url\x18\x03 \x01(\tR\x05wsUrl\x12\x12\n" +
+	"\x04full\x18\x04 \x01(\bR\x04full\x12\x12\n" +
+	"\x04load\x18\x05 \x01(\x05R\x04load\"U\n" +
+	"\n" +
+	"ServerList\x12-\n" +
+	"\aservers\x18\x01 \x03(\v2\x13.game.v1.ServerInfoR\aservers\x12\x18\n" +
+	"\acurrent\x18\x02 \x01(\tR\acurrent\" \n" +
+	"\x0eEnterServerReq\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"k\n" +
+	"\x0eEnterServerRsp\x12+\n" +
+	"\x06server\x18\x01 \x01(\v2\x13.game.v1.ServerInfoR\x06server\x12\x15\n" +
+	"\x06base_x\x18\x02 \x01(\x05R\x05baseX\x12\x15\n" +
+	"\x06base_y\x18\x03 \x01(\x05R\x05baseY\"B\n" +
 	"\tResumeRsp\x12\x1a\n" +
 	"\breplayed\x18\x01 \x01(\bR\breplayed\x12\x19\n" +
 	"\bnext_seq\x18\x02 \x01(\x04R\anextSeq\"\x1e\n" +
@@ -2213,12 +3114,45 @@ const file_game_v1_envelope_proto_rawDesc = "" +
 	"\bMarchRsp\x12\x19\n" +
 	"\bmarch_id\x18\x01 \x01(\x04R\amarchId\x12 \n" +
 	"\farrive_at_ms\x18\x02 \x01(\x03R\n" +
-	"arriveAtMs\"]\n" +
+	"arriveAtMs\"q\n" +
 	"\fMarchArrived\x12\x19\n" +
 	"\bmarch_id\x18\x01 \x01(\x04R\amarchId\x12\f\n" +
 	"\x01x\x18\x02 \x01(\x05R\x01x\x12\f\n" +
 	"\x01y\x18\x03 \x01(\x05R\x01y\x12\x16\n" +
-	"\x06troops\x18\x04 \x01(\x03R\x06troops\"4\n" +
+	"\x06troops\x18\x04 \x01(\x03R\x06troops\x12\x12\n" +
+	"\x04home\x18\x05 \x01(\bR\x04home\"\x9a\x01\n" +
+	"\tMarchInfo\x12\x19\n" +
+	"\bmarch_id\x18\x01 \x01(\x04R\amarchId\x12\x11\n" +
+	"\x04to_x\x18\x02 \x01(\x05R\x03toX\x12\x11\n" +
+	"\x04to_y\x18\x03 \x01(\x05R\x03toY\x12\x16\n" +
+	"\x06troops\x18\x04 \x01(\x03R\x06troops\x12 \n" +
+	"\farrive_at_ms\x18\x05 \x01(\x03R\n" +
+	"arriveAtMs\x12\x12\n" +
+	"\x04home\x18\x06 \x01(\bR\x04home\"L\n" +
+	"\x04Tile\x12\f\n" +
+	"\x01x\x18\x01 \x01(\x05R\x01x\x12\f\n" +
+	"\x01y\x18\x02 \x01(\x05R\x01y\x12\x10\n" +
+	"\x03uid\x18\x03 \x01(\x03R\x03uid\x12\x16\n" +
+	"\x06troops\x18\x04 \x01(\x03R\x06troops\"\xdd\x01\n" +
+	"\rWorldSnapshot\x12\x18\n" +
+	"\akingdom\x18\x01 \x01(\tR\akingdom\x12\x15\n" +
+	"\x06base_x\x18\x02 \x01(\x05R\x05baseX\x12\x15\n" +
+	"\x06base_y\x18\x03 \x01(\x05R\x05baseY\x12\x19\n" +
+	"\bmap_size\x18\x04 \x01(\x05R\amapSize\x12\x16\n" +
+	"\x06troops\x18\x05 \x01(\x03R\x06troops\x12#\n" +
+	"\x05tiles\x18\x06 \x03(\v2\r.game.v1.TileR\x05tiles\x12,\n" +
+	"\amarches\x18\a \x03(\v2\x12.game.v1.MarchInfoR\amarches\"(\n" +
+	"\n" +
+	"MapViewReq\x12\f\n" +
+	"\x01x\x18\x01 \x01(\x05R\x01x\x12\f\n" +
+	"\x01y\x18\x02 \x01(\x05R\x01y\"1\n" +
+	"\n" +
+	"MapViewRsp\x12#\n" +
+	"\x05tiles\x18\x01 \x03(\v2\r.game.v1.TileR\x05tiles\"?\n" +
+	"\tRecallReq\x12\f\n" +
+	"\x01x\x18\x01 \x01(\x05R\x01x\x12\f\n" +
+	"\x01y\x18\x02 \x01(\x05R\x01y\x12\x16\n" +
+	"\x06troops\x18\x03 \x01(\x03R\x06troops\"4\n" +
 	"\bBuilding\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x14\n" +
 	"\x05level\x18\x02 \x01(\x05R\x05level\"}\n" +
@@ -2228,11 +3162,26 @@ const file_game_v1_envelope_proto_rawDesc = "" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x19\n" +
 	"\bto_level\x18\x03 \x01(\x05R\atoLevel\x12 \n" +
 	"\ffinish_at_ms\x18\x04 \x01(\x03R\n" +
-	"finishAtMs\"\x85\x01\n" +
+	"finishAtMs\"g\n" +
+	"\fCityTraining\x12\x1f\n" +
+	"\vtraining_id\x18\x01 \x01(\x04R\n" +
+	"trainingId\x12\x14\n" +
+	"\x05count\x18\x02 \x01(\x03R\x05count\x12 \n" +
+	"\ffinish_at_ms\x18\x03 \x01(\x03R\n" +
+	"finishAtMs\"\xd0\x01\n" +
 	"\fCitySnapshot\x12\x12\n" +
 	"\x04gold\x18\x01 \x01(\x03R\x04gold\x12/\n" +
 	"\tbuildings\x18\x02 \x03(\v2\x11.game.v1.BuildingR\tbuildings\x120\n" +
-	"\bupgrades\x18\x03 \x03(\v2\x14.game.v1.CityUpgradeR\bupgrades\"$\n" +
+	"\bupgrades\x18\x03 \x03(\v2\x14.game.v1.CityUpgradeR\bupgrades\x12\x16\n" +
+	"\x06troops\x18\x04 \x01(\x03R\x06troops\x121\n" +
+	"\btraining\x18\x05 \x03(\v2\x15.game.v1.CityTrainingR\btraining\"$\n" +
+	"\fCityTrainReq\x12\x14\n" +
+	"\x05count\x18\x01 \x01(\x03R\x05count\"U\n" +
+	"\fCityTrainRsp\x121\n" +
+	"\btraining\x18\x01 \x01(\v2\x15.game.v1.CityTrainingR\btraining\x12\x12\n" +
+	"\x04gold\x18\x02 \x01(\x03R\x04gold\"#\n" +
+	"\vCityTrained\x12\x14\n" +
+	"\x05count\x18\x01 \x01(\x03R\x05count\"$\n" +
 	"\x0eCityUpgradeReq\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\"T\n" +
 	"\x0eCityUpgradeRsp\x12.\n" +
@@ -2290,7 +3239,7 @@ const file_game_v1_envelope_proto_rawDesc = "" +
 	"\aentries\x18\x02 \x03(\v2\x12.game.v1.RankEntryR\aentries\x12\x1b\n" +
 	"\tself_rank\x18\x03 \x01(\x03R\bselfRank\x12\x1d\n" +
 	"\n" +
-	"self_score\x18\x04 \x01(\x03R\tselfScore*\x90\a\n" +
+	"self_score\x18\x04 \x01(\x03R\tselfScore*\xca\b\n" +
 	"\x05MsgId\x12\x16\n" +
 	"\x12MSG_ID_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10MSG_ID_HEARTBEAT\x10\x01\x12\x16\n" +
@@ -2304,11 +3253,18 @@ const file_game_v1_envelope_proto_rawDesc = "" +
 	"\x0fMSG_ID_SPIN_RSP\x10\xd2\x0f\x12\x15\n" +
 	"\x10MSG_ID_MARCH_REQ\x10\xb9\x17\x12\x15\n" +
 	"\x10MSG_ID_MARCH_RSP\x10\xba\x17\x12\x19\n" +
-	"\x14MSG_ID_MARCH_ARRIVED\x10\xbb\x17\x12\x1c\n" +
+	"\x14MSG_ID_MARCH_ARRIVED\x10\xbb\x17\x12\x1a\n" +
+	"\x15MSG_ID_WORLD_SNAPSHOT\x10\xbc\x17\x12\x18\n" +
+	"\x13MSG_ID_MAP_VIEW_REQ\x10\xbd\x17\x12\x18\n" +
+	"\x13MSG_ID_MAP_VIEW_RSP\x10\xbe\x17\x12\x16\n" +
+	"\x11MSG_ID_RECALL_REQ\x10\xbf\x17\x12\x1c\n" +
 	"\x17MSG_ID_CITY_UPGRADE_REQ\x10\xa1\x1f\x12\x1c\n" +
 	"\x17MSG_ID_CITY_UPGRADE_RSP\x10\xa2\x1f\x12\x19\n" +
 	"\x14MSG_ID_CITY_UPGRADED\x10\xa3\x1f\x12\x19\n" +
 	"\x14MSG_ID_CITY_SNAPSHOT\x10\xa4\x1f\x12\x1a\n" +
+	"\x15MSG_ID_CITY_TRAIN_REQ\x10\xa5\x1f\x12\x1a\n" +
+	"\x15MSG_ID_CITY_TRAIN_RSP\x10\xa6\x1f\x12\x18\n" +
+	"\x13MSG_ID_CITY_TRAINED\x10\xa7\x1f\x12\x1a\n" +
 	"\x15MSG_ID_MAIL_CLAIM_REQ\x10\x89'\x12\x1a\n" +
 	"\x15MSG_ID_MAIL_CLAIM_RSP\x10\x8a'\x12\x14\n" +
 	"\x0fMSG_ID_MAIL_NEW\x10\x8b'\x12\x19\n" +
@@ -2325,7 +3281,7 @@ const file_game_v1_envelope_proto_rawDesc = "" +
 	"\x14MSG_ID_CHAT_SNAPSHOT\x10\xdc6\x12\x1a\n" +
 	"\x15MSG_ID_RANK_QUERY_REQ\x10\xc1>\x12\x1a\n" +
 	"\x15MSG_ID_RANK_QUERY_RSP\x10\xc2>\x12\x19\n" +
-	"\x14MSG_ID_RANK_SNAPSHOT\x10\xc3>*\xeb\x01\n" +
+	"\x14MSG_ID_RANK_SNAPSHOT\x10\xc3>*\x8d\x02\n" +
 	"\tErrorCode\x12\x11\n" +
 	"\rERROR_CODE_OK\x10\x00\x12\x1a\n" +
 	"\x16ERROR_CODE_BAD_REQUEST\x10\x01\x12\x1b\n" +
@@ -2334,7 +3290,8 @@ const file_game_v1_envelope_proto_rawDesc = "" +
 	"\x1dERROR_CODE_INSUFFICIENT_FUNDS\x10\x04\x12$\n" +
 	" ERROR_CODE_DUPLICATE_IN_PROGRESS\x10\x05\x12\x17\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\x06\x12\x13\n" +
-	"\x0fERROR_CODE_BUSY\x10\aB3Z1github.com/yourname/gameserver/gen/game/v1;gamev1b\x06proto3"
+	"\x0fERROR_CODE_BUSY\x10\a\x12 \n" +
+	"\x1cERROR_CODE_NOT_ENOUGH_TROOPS\x10\bB3Z1github.com/yourname/gameserver/gen/game/v1;gamev1b\x06proto3"
 
 var (
 	file_game_v1_envelope_proto_rawDescOnce sync.Once
@@ -2349,7 +3306,7 @@ func file_game_v1_envelope_proto_rawDescGZIP() []byte {
 }
 
 var file_game_v1_envelope_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_game_v1_envelope_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_game_v1_envelope_proto_msgTypes = make([]protoimpl.MessageInfo, 48)
 var file_game_v1_envelope_proto_goTypes = []any{
 	(MsgId)(0),              // 0: game.v1.MsgId
 	(ErrorCode)(0),          // 1: game.v1.ErrorCode
@@ -2358,51 +3315,72 @@ var file_game_v1_envelope_proto_goTypes = []any{
 	(*ConnectReq)(nil),      // 4: game.v1.ConnectReq
 	(*LoginReq)(nil),        // 5: game.v1.LoginReq
 	(*LoginRsp)(nil),        // 6: game.v1.LoginRsp
-	(*ResumeRsp)(nil),       // 7: game.v1.ResumeRsp
-	(*Kick)(nil),            // 8: game.v1.Kick
-	(*RoomActionReq)(nil),   // 9: game.v1.RoomActionReq
-	(*RoomActionRsp)(nil),   // 10: game.v1.RoomActionRsp
-	(*RoomSnapshot)(nil),    // 11: game.v1.RoomSnapshot
-	(*SpinReq)(nil),         // 12: game.v1.SpinReq
-	(*SpinRsp)(nil),         // 13: game.v1.SpinRsp
-	(*MarchReq)(nil),        // 14: game.v1.MarchReq
-	(*MarchRsp)(nil),        // 15: game.v1.MarchRsp
-	(*MarchArrived)(nil),    // 16: game.v1.MarchArrived
-	(*Building)(nil),        // 17: game.v1.Building
-	(*CityUpgrade)(nil),     // 18: game.v1.CityUpgrade
-	(*CitySnapshot)(nil),    // 19: game.v1.CitySnapshot
-	(*CityUpgradeReq)(nil),  // 20: game.v1.CityUpgradeReq
-	(*CityUpgradeRsp)(nil),  // 21: game.v1.CityUpgradeRsp
-	(*CityUpgraded)(nil),    // 22: game.v1.CityUpgraded
-	(*Mail)(nil),            // 23: game.v1.Mail
-	(*MailSnapshot)(nil),    // 24: game.v1.MailSnapshot
-	(*MailNew)(nil),         // 25: game.v1.MailNew
-	(*MailClaimReq)(nil),    // 26: game.v1.MailClaimReq
-	(*MailClaimRsp)(nil),    // 27: game.v1.MailClaimRsp
-	(*AllianceInfo)(nil),    // 28: game.v1.AllianceInfo
-	(*AllianceKickReq)(nil), // 29: game.v1.AllianceKickReq
-	(*ChatMessage)(nil),     // 30: game.v1.ChatMessage
-	(*ChatSnapshot)(nil),    // 31: game.v1.ChatSnapshot
-	(*ChatSendReq)(nil),     // 32: game.v1.ChatSendReq
-	(*ChatPush)(nil),        // 33: game.v1.ChatPush
-	(*RankEntry)(nil),       // 34: game.v1.RankEntry
-	(*RankBoard)(nil),       // 35: game.v1.RankBoard
+	(*ServerInfo)(nil),      // 7: game.v1.ServerInfo
+	(*ServerList)(nil),      // 8: game.v1.ServerList
+	(*EnterServerReq)(nil),  // 9: game.v1.EnterServerReq
+	(*EnterServerRsp)(nil),  // 10: game.v1.EnterServerRsp
+	(*ResumeRsp)(nil),       // 11: game.v1.ResumeRsp
+	(*Kick)(nil),            // 12: game.v1.Kick
+	(*RoomActionReq)(nil),   // 13: game.v1.RoomActionReq
+	(*RoomActionRsp)(nil),   // 14: game.v1.RoomActionRsp
+	(*RoomSnapshot)(nil),    // 15: game.v1.RoomSnapshot
+	(*SpinReq)(nil),         // 16: game.v1.SpinReq
+	(*SpinRsp)(nil),         // 17: game.v1.SpinRsp
+	(*MarchReq)(nil),        // 18: game.v1.MarchReq
+	(*MarchRsp)(nil),        // 19: game.v1.MarchRsp
+	(*MarchArrived)(nil),    // 20: game.v1.MarchArrived
+	(*MarchInfo)(nil),       // 21: game.v1.MarchInfo
+	(*Tile)(nil),            // 22: game.v1.Tile
+	(*WorldSnapshot)(nil),   // 23: game.v1.WorldSnapshot
+	(*MapViewReq)(nil),      // 24: game.v1.MapViewReq
+	(*MapViewRsp)(nil),      // 25: game.v1.MapViewRsp
+	(*RecallReq)(nil),       // 26: game.v1.RecallReq
+	(*Building)(nil),        // 27: game.v1.Building
+	(*CityUpgrade)(nil),     // 28: game.v1.CityUpgrade
+	(*CityTraining)(nil),    // 29: game.v1.CityTraining
+	(*CitySnapshot)(nil),    // 30: game.v1.CitySnapshot
+	(*CityTrainReq)(nil),    // 31: game.v1.CityTrainReq
+	(*CityTrainRsp)(nil),    // 32: game.v1.CityTrainRsp
+	(*CityTrained)(nil),     // 33: game.v1.CityTrained
+	(*CityUpgradeReq)(nil),  // 34: game.v1.CityUpgradeReq
+	(*CityUpgradeRsp)(nil),  // 35: game.v1.CityUpgradeRsp
+	(*CityUpgraded)(nil),    // 36: game.v1.CityUpgraded
+	(*Mail)(nil),            // 37: game.v1.Mail
+	(*MailSnapshot)(nil),    // 38: game.v1.MailSnapshot
+	(*MailNew)(nil),         // 39: game.v1.MailNew
+	(*MailClaimReq)(nil),    // 40: game.v1.MailClaimReq
+	(*MailClaimRsp)(nil),    // 41: game.v1.MailClaimRsp
+	(*AllianceInfo)(nil),    // 42: game.v1.AllianceInfo
+	(*AllianceKickReq)(nil), // 43: game.v1.AllianceKickReq
+	(*ChatMessage)(nil),     // 44: game.v1.ChatMessage
+	(*ChatSnapshot)(nil),    // 45: game.v1.ChatSnapshot
+	(*ChatSendReq)(nil),     // 46: game.v1.ChatSendReq
+	(*ChatPush)(nil),        // 47: game.v1.ChatPush
+	(*RankEntry)(nil),       // 48: game.v1.RankEntry
+	(*RankBoard)(nil),       // 49: game.v1.RankBoard
 }
 var file_game_v1_envelope_proto_depIdxs = []int32{
 	3,  // 0: game.v1.ConnectReq.bindings:type_name -> game.v1.Binding
-	17, // 1: game.v1.CitySnapshot.buildings:type_name -> game.v1.Building
-	18, // 2: game.v1.CitySnapshot.upgrades:type_name -> game.v1.CityUpgrade
-	18, // 3: game.v1.CityUpgradeRsp.upgrade:type_name -> game.v1.CityUpgrade
-	23, // 4: game.v1.MailSnapshot.mail:type_name -> game.v1.Mail
-	23, // 5: game.v1.MailNew.mail:type_name -> game.v1.Mail
-	30, // 6: game.v1.ChatSnapshot.messages:type_name -> game.v1.ChatMessage
-	30, // 7: game.v1.ChatPush.message:type_name -> game.v1.ChatMessage
-	34, // 8: game.v1.RankBoard.entries:type_name -> game.v1.RankEntry
-	9,  // [9:9] is the sub-list for method output_type
-	9,  // [9:9] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	7,  // 1: game.v1.ServerList.servers:type_name -> game.v1.ServerInfo
+	7,  // 2: game.v1.EnterServerRsp.server:type_name -> game.v1.ServerInfo
+	22, // 3: game.v1.WorldSnapshot.tiles:type_name -> game.v1.Tile
+	21, // 4: game.v1.WorldSnapshot.marches:type_name -> game.v1.MarchInfo
+	22, // 5: game.v1.MapViewRsp.tiles:type_name -> game.v1.Tile
+	27, // 6: game.v1.CitySnapshot.buildings:type_name -> game.v1.Building
+	28, // 7: game.v1.CitySnapshot.upgrades:type_name -> game.v1.CityUpgrade
+	29, // 8: game.v1.CitySnapshot.training:type_name -> game.v1.CityTraining
+	29, // 9: game.v1.CityTrainRsp.training:type_name -> game.v1.CityTraining
+	28, // 10: game.v1.CityUpgradeRsp.upgrade:type_name -> game.v1.CityUpgrade
+	37, // 11: game.v1.MailSnapshot.mail:type_name -> game.v1.Mail
+	37, // 12: game.v1.MailNew.mail:type_name -> game.v1.Mail
+	44, // 13: game.v1.ChatSnapshot.messages:type_name -> game.v1.ChatMessage
+	44, // 14: game.v1.ChatPush.message:type_name -> game.v1.ChatMessage
+	48, // 15: game.v1.RankBoard.entries:type_name -> game.v1.RankEntry
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_game_v1_envelope_proto_init() }
@@ -2416,7 +3394,7 @@ func file_game_v1_envelope_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_game_v1_envelope_proto_rawDesc), len(file_game_v1_envelope_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   34,
+			NumMessages:   48,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

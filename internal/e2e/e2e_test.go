@@ -18,6 +18,7 @@ import (
 
 	gamev1 "github.com/yourname/gameserver/gen/game/v1"
 	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
+	"github.com/yourname/gameserver/internal/city"
 	"github.com/yourname/gameserver/internal/gamehost"
 	"github.com/yourname/gameserver/internal/gateway"
 	"github.com/yourname/gameserver/internal/room"
@@ -298,7 +299,7 @@ func TestStaleTokenCannotConnect(t *testing.T) {
 
 func TestOneConnectionReachesTwoServices(t *testing.T) {
 	timers, store, ids := worldDeps(t)
-	w := slg.New(slg.Config{Store: store, Timers: timers, IDs: ids, Speed: 1000})
+	w := slg.New(slg.Config{Store: store, Timers: timers, IDs: ids, MemberOf: inK1, Speed: 1000})
 	timers.Start(context.Background(), discovery.Slot("k1"))
 
 	s := newStack(t, map[string][]string{
@@ -306,8 +307,13 @@ func TestOneConnectionReachesTwoServices(t *testing.T) {
 		"world": {startBackend(t, w.Factory, time.Minute)},
 	})
 	c := s.dial(t, s.login(t, 1), roomBinding(0), &gamev1.Binding{Service: "world", Key: "k1"})
-	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
-	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	seen := map[uint32]bool{}
+	for len(seen) < 2 { // Two tunnels, so the snapshots arrive in any order.
+		switch id := c.read().GetMsgId(); id {
+		case uint32(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT), uint32(gamev1.MsgId_MSG_ID_WORLD_SNAPSHOT):
+			seen[id] = true
+		}
+	}
 
 	action(c, 1, 1)
 	if env := c.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP); env.GetChannel() != 0 {
@@ -336,12 +342,12 @@ func worldDeps(t *testing.T) (*timer.Group, *slg.MemoryStore, *idgen.Generator) 
 	jobs := timer.NewMemStore()
 	timers := timer.NewGroup(timer.Config{Owner: "t", Store: jobs, Poll: 10 * time.Millisecond})
 	t.Cleanup(timers.StopAll)
-	return timers, slg.NewMemoryStore(jobs), ids
+	return timers, slg.NewMemoryStore(jobs, city.NewMemory(jobs)), ids
 }
 
 func TestMarchSurvivesWorldRestart(t *testing.T) {
 	store := timer.NewMemStore()
-	marches := slg.NewMemoryStore(store)
+	marches := slg.NewMemoryStore(store, city.NewMemory(store))
 	slot := discovery.Slot("k1")
 	ids, err := idgen.New(1)
 	if err != nil {
@@ -349,10 +355,10 @@ func TestMarchSurvivesWorldRestart(t *testing.T) {
 	}
 	// First process: accept a march, then die before it arrives.
 	first := timer.NewGroup(timer.Config{Owner: "a", Store: store})
-	w1 := slg.New(slg.Config{Store: marches, Timers: first, IDs: ids, Speed: 100})
+	w1 := slg.New(slg.Config{Store: marches, Timers: first, IDs: ids, MemberOf: inK1, Speed: 100})
 	s := newStack(t, map[string][]string{"world": {startBackend(t, w1.Factory, time.Minute)}})
 	c := s.dial(t, s.login(t, 1), &gamev1.Binding{Service: "world", Key: "k1"})
-	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c.until(gamev1.MsgId_MSG_ID_WORLD_SNAPSHOT)
 	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1, RequestId: "m1"},
 		&gamev1.MarchReq{ToX: 5, ToY: 5, Troops: 1})
 	c.until(gamev1.MsgId_MSG_ID_MARCH_RSP)
@@ -362,7 +368,7 @@ func TestMarchSurvivesWorldRestart(t *testing.T) {
 
 	// Second process: picks the job up from storage and completes it.
 	second := timer.NewGroup(timer.Config{Owner: "b", Store: store, Poll: 10 * time.Millisecond})
-	w2 := slg.New(slg.Config{Store: marches, Timers: second, IDs: ids})
+	w2 := slg.New(slg.Config{Store: marches, Timers: second, IDs: ids, MemberOf: inK1})
 	second.Start(context.Background(), slot)
 	defer second.StopAll()
 	deadline := time.Now().Add(3 * time.Second)
@@ -377,12 +383,12 @@ func TestMarchSurvivesWorldRestart(t *testing.T) {
 	// knows. A fresh snapshot must still show the troops.
 	s2 := newStack(t, map[string][]string{"world": {startBackend(t, w2.Factory, time.Minute)}})
 	c2 := s2.dial(t, s2.login(t, 1), &gamev1.Binding{Service: "world", Key: "k1"})
-	snap := &gamev1.RoomSnapshot{}
-	if err := proto.Unmarshal(c2.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT).GetPayload(), snap); err != nil {
+	snap := &gamev1.WorldSnapshot{}
+	if err := proto.Unmarshal(c2.until(gamev1.MsgId_MSG_ID_WORLD_SNAPSHOT).GetPayload(), snap); err != nil {
 		t.Fatal(err)
 	}
-	if snap.GetValue() != 1 {
-		t.Fatalf("snapshot troops %d, want 1", snap.GetValue())
+	if snap.GetTroops() != 1 {
+		t.Fatalf("snapshot troops %d, want 1", snap.GetTroops())
 	}
 }
 
@@ -604,7 +610,7 @@ func TestOldPositionFromLostSeatGetsSnapshot(t *testing.T) {
 
 func TestMarchRetriedAfterSeatLossIsNotDoubled(t *testing.T) {
 	timers, store, ids := worldDeps(t)
-	w := slg.New(slg.Config{Store: store, Timers: timers, IDs: ids})
+	w := slg.New(slg.Config{Store: store, Timers: timers, IDs: ids, MemberOf: inK1})
 	s := newStack(t, map[string][]string{"world": {startBackend(t, w.Factory, 20*time.Millisecond)}})
 	tok := s.login(t, 1)
 	bind := &gamev1.Binding{Service: "world", Key: "k1"}
@@ -618,7 +624,7 @@ func TestMarchRetriedAfterSeatLossIsNotDoubled(t *testing.T) {
 		return rsp.GetMarchId()
 	}
 	c := s.dial(t, tok, bind)
-	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c.until(gamev1.MsgId_MSG_ID_WORLD_SNAPSHOT)
 	first := march(c)
 	if err := c.ws.CloseNow(); err != nil {
 		t.Fatal(err)
@@ -626,7 +632,7 @@ func TestMarchRetriedAfterSeatLossIsNotDoubled(t *testing.T) {
 	time.Sleep(200 * time.Millisecond) // The seat, and its dedupe state, expire.
 
 	c2 := s.dial(t, tok, bind)
-	c2.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c2.until(gamev1.MsgId_MSG_ID_WORLD_SNAPSHOT)
 	if again := march(c2); again != first {
 		t.Fatalf("retry made march %d after %d", again, first)
 	}
@@ -634,10 +640,10 @@ func TestMarchRetriedAfterSeatLossIsNotDoubled(t *testing.T) {
 
 func TestMarchWithoutRequestIDIsRejected(t *testing.T) {
 	timers, store, ids := worldDeps(t)
-	w := slg.New(slg.Config{Store: store, Timers: timers, IDs: ids})
+	w := slg.New(slg.Config{Store: store, Timers: timers, IDs: ids, MemberOf: inK1})
 	s := newStack(t, map[string][]string{"world": {startBackend(t, w.Factory, time.Minute)}})
 	c := s.dial(t, s.login(t, 1), &gamev1.Binding{Service: "world", Key: "k1"})
-	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c.until(gamev1.MsgId_MSG_ID_WORLD_SNAPSHOT)
 	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1},
 		&gamev1.MarchReq{ToX: 1, Troops: 5})
 	if env := c.read(); env.GetCode() != int32(gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST) {

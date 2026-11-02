@@ -15,7 +15,7 @@ import (
 func marchFixture() (March, timer.Job) {
 	id := uint64(itest.ID())
 	at := time.Now().Add(time.Hour)
-	m := March{ID: id, Kingdom: fmt.Sprint("k", id%1_000_000), UID: itest.ID(), ToX: 1, ToY: 2, Troops: 7, ArriveAt: at}
+	m := March{ID: id, Kingdom: fmt.Sprint("k", id%1_000_000), UID: itest.ID(), RequestID: fmt.Sprint("r", id), ToX: 1, ToY: 2, Troops: 7, ArriveAt: at}
 	return m, timer.Job{ID: id, Shard: int(id % 1_000_000), Kind: KindMarchArrive, Payload: []byte("p"), FireAt: at}
 }
 
@@ -24,7 +24,7 @@ func TestMySQLMarchAndTimerCommitTogether(t *testing.T) {
 	db := itest.MySQL(t)
 	s, timers := &MySQLStore{DB: db}, &timer.MySQLStore{DB: db}
 	m, job := marchFixture()
-	if err := s.Create(ctx, m, job); err != nil {
+	if _, err := s.Create(ctx, m, job); err != nil {
 		t.Fatal(err)
 	}
 	due, err := timers.Due(ctx, job.Shard, m.ArriveAt.Add(time.Second), 10)
@@ -45,6 +45,27 @@ func TestMySQLMarchAndTimerCommitTogether(t *testing.T) {
 	}
 }
 
+func TestMySQLRetriedRequestReturnsFirstMarch(t *testing.T) {
+	ctx := context.Background()
+	db := itest.MySQL(t)
+	s, timers := &MySQLStore{DB: db}, &timer.MySQLStore{DB: db}
+	first, job := marchFixture()
+	if _, err := s.Create(ctx, first, job); err != nil {
+		t.Fatal(err)
+	}
+	retry, retryJob := marchFixture()
+	retry.UID, retry.RequestID, retry.Kingdom = first.UID, first.RequestID, first.Kingdom
+	retryJob.Shard = job.Shard
+	got, err := s.Create(ctx, retry, retryJob)
+	if err != nil || got.ID != first.ID || got.Troops != first.Troops {
+		t.Fatalf("retry returned %+v: %v", got, err)
+	}
+	due, err := timers.Due(ctx, job.Shard, first.ArriveAt.Add(time.Second), 10)
+	if err != nil || len(due) != 1 {
+		t.Fatalf("a retry must add no timer, due %v: %v", due, err)
+	}
+}
+
 func TestMySQLMarchIsRolledBackIfItsTimerFails(t *testing.T) {
 	ctx := context.Background()
 	db := itest.MySQL(t)
@@ -53,7 +74,7 @@ func TestMySQLMarchIsRolledBackIfItsTimerFails(t *testing.T) {
 	if err := timers.Add(ctx, job); err != nil { // The march's insert will collide.
 		t.Fatal(err)
 	}
-	if err := s.Create(ctx, m, job); err == nil {
+	if _, err := s.Create(ctx, m, job); err == nil {
 		t.Fatal("expected the timer insert to fail")
 	}
 	if _, _, err := s.Arrive(ctx, m.ID); err == nil {

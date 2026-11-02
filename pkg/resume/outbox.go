@@ -11,18 +11,24 @@ type Stamp func(seq uint64) []byte
 // Session is a fixed-size ring of sent frames plus client request dedupe.
 type Session struct {
 	frames  [][]byte
-	nextSeq uint64 // Seq assigned to the next pushed frame; starts at 1.
+	start   uint64 // The first seq this session issued.
+	nextSeq uint64 // Seq assigned to the next pushed frame.
 
 	lastClientSeq uint64
 	lastResponse  []byte
 }
 
 // New creates a session retaining up to capacity frames.
-func New(capacity int) *Session {
+func New(capacity int) *Session { return NewAt(capacity, 1) }
+
+// NewAt creates a session whose seqs begin at start. A later session for the
+// same player must start beyond every seq an earlier one issued, or a client's
+// old last_seq would match frames it never saw and skip its snapshot.
+func NewAt(capacity int, start uint64) *Session {
 	if capacity <= 0 {
 		capacity = 256
 	}
-	return &Session{frames: make([][]byte, capacity), nextSeq: 1}
+	return &Session{frames: make([][]byte, capacity), start: start, nextSeq: start}
 }
 
 // Push assigns the next seq, retains the frame and returns it.
@@ -42,7 +48,7 @@ func (s *Session) NextSeq() uint64 { return s.nextSeq }
 // session was rebuilt), and the caller must send a full snapshot.
 func (s *Session) Replay(lastSeq uint64) (frames [][]byte, ok bool) {
 	last := s.nextSeq - 1
-	if lastSeq > last {
+	if lastSeq > last || lastSeq+1 < s.start {
 		return nil, false
 	}
 	capacity := uint64(len(s.frames))
@@ -77,6 +83,10 @@ func (s *Session) CheckClientSeq(clientSeq uint64) (Verdict, []byte) {
 		return DropStale, nil
 	}
 }
+
+// ResetDedupe forgets client requests. A new login is a new client, possibly on
+// another device, with its own counter.
+func (s *Session) ResetDedupe() { s.lastClientSeq, s.lastResponse = 0, nil }
 
 // Commit records the response for clientSeq, for a later retry.
 func (s *Session) Commit(clientSeq uint64, response []byte) {

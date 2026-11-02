@@ -18,6 +18,7 @@ import (
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/protobuf/proto"
 
 	gamev1 "github.com/yourname/gameserver/gen/game/v1"
@@ -55,7 +56,14 @@ type Config struct {
 	SendQueue  int           // Default 256.
 	RateLimit  rate.Limit    // Messages per second. Default 30.
 	RateBurst  int           // Default 60.
-	Dial       func(addr string) (*grpc.ClientConn, error)
+	// RecheckEvery is how often an open socket re-checks its login, for
+	// notifications that were missed. Default 5m.
+	RecheckEvery time.Duration
+	// DialTimeout bounds opening a tunnel. Default 3s.
+	DialTimeout time.Duration
+	// DialBackoff is how long a failed node is left alone. Default 1s.
+	DialBackoff time.Duration
+	Dial        func(addr string) (*grpc.ClientConn, error)
 }
 
 // Gateway serves WebSocket clients.
@@ -66,8 +74,9 @@ type Gateway struct {
 	nextConn atomic.Uint64
 
 	mu      sync.Mutex
-	tunnels map[string]*tunnel
+	tunnels map[string]*tunnelSlot
 	conns   map[*conn]struct{}
+	byUID   map[int64]map[*conn]struct{}
 }
 
 // New creates a Gateway.
@@ -93,12 +102,54 @@ func New(cfg Config) *Gateway {
 	if cfg.RateLimit <= 0 {
 		cfg.RateLimit, cfg.RateBurst = 30, 60
 	}
+	if cfg.RecheckEvery <= 0 {
+		cfg.RecheckEvery = 5 * time.Minute
+	}
+	if cfg.DialTimeout <= 0 {
+		cfg.DialTimeout = 3 * time.Second
+	}
+	if cfg.DialBackoff <= 0 {
+		cfg.DialBackoff = time.Second
+	}
 	if cfg.Dial == nil {
 		cfg.Dial = func(addr string) (*grpc.ClientConn, error) {
-			return grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			// Client heartbeats end at the gateway, so without pings a silently
+			// dead node would look healthy until TCP gave up.
+			return grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()),
+				grpc.WithKeepaliveParams(keepalive.ClientParameters{
+					Time: 15 * time.Second, Timeout: 5 * time.Second, PermitWithoutStream: true}))
 		}
 	}
-	return &Gateway{cfg: cfg, tunnels: map[string]*tunnel{}, conns: map[*conn]struct{}{}}
+	return &Gateway{cfg: cfg, tunnels: map[string]*tunnelSlot{}, conns: map[*conn]struct{}{},
+		byUID: map[int64]map[*conn]struct{}{}}
+}
+
+// Run closes superseded sockets as new logins are announced, until ctx ends.
+func (g *Gateway) Run(ctx context.Context) {
+	n, ok := g.cfg.Epochs.(session.Notifier)
+	if !ok {
+		return
+	}
+	for ctx.Err() == nil {
+		if err := n.Subscribe(ctx, g.superseded); err != nil && ctx.Err() == nil {
+			slog.Warn("login notifications", "err", err)
+			time.Sleep(time.Second)
+		}
+	}
+}
+
+func (g *Gateway) superseded(uid int64, epoch uint64) {
+	g.mu.Lock()
+	var old []*conn
+	for c := range g.byUID[uid] {
+		if c.epoch < epoch {
+			old = append(old, c)
+		}
+	}
+	g.mu.Unlock()
+	for _, c := range old {
+		c.kick("logged in elsewhere")
+	}
 }
 
 // Online returns the current connection count.
@@ -109,6 +160,8 @@ type conn struct {
 	id       uint64 // Unique in this gateway, so within any tunnel it owns.
 	uid      int64
 	epoch    uint64
+	expires  time.Time
+	recheck  time.Time // Read loop only.
 	ws       *websocket.Conn
 	out      chan []byte
 	closed   chan struct{}
@@ -132,10 +185,24 @@ func (c *conn) shut(reason string) {
 	})
 }
 
+// kick tells the client why, then closes.
+func (c *conn) kick(reason string) {
+	if f, err := kickFrame(reason); err == nil {
+		c.push(f)
+	}
+	c.shut(reason)
+}
+
 func (c *conn) push(frame []byte) {
+	// Checked first, and alone: after one frame is dropped no later frame may be
+	// sent, or the client would report a last_seq beyond the gap and lose it.
+	select {
+	case <-c.closed:
+		return
+	default:
+	}
 	select {
 	case c.out <- frame:
-	case <-c.closed:
 	default:
 		// Slow client. Closing is safe: the game node retains its frames.
 		c.shut("slow client")
@@ -172,6 +239,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	go g.writeLoop(ctx, c)
 	g.readLoop(ctx, c)
 	c.shut("client gone")
+	<-c.flushed // A close frame must not overtake a queued Kick.
 	if reason, _ := c.reason.Load().(string); reason != "" {
 		_ = ws.Close(websocket.StatusNormalClosure, reason)
 	}
@@ -182,10 +250,18 @@ func (g *Gateway) track(c *conn, add bool) {
 	defer g.mu.Unlock()
 	if add {
 		g.conns[c] = struct{}{}
+		if g.byUID[c.uid] == nil {
+			g.byUID[c.uid] = map[*conn]struct{}{}
+		}
+		g.byUID[c.uid][c] = struct{}{}
 		g.online.Add(1)
 		return
 	}
 	delete(g.conns, c)
+	delete(g.byUID[c.uid], c)
+	if len(g.byUID[c.uid]) == 0 {
+		delete(g.byUID, c.uid)
+	}
 	g.online.Add(-1)
 }
 
@@ -224,6 +300,10 @@ func (g *Gateway) handshake(ctx context.Context, ws *websocket.Conn) (*conn, err
 	c := &conn{id: g.nextConn.Add(1), uid: claims.UID, epoch: claims.Epoch, ws: ws,
 		out: make(chan []byte, g.cfg.SendQueue), closed: make(chan struct{}), flushed: make(chan struct{}),
 		limiter: rate.NewLimiter(g.cfg.RateLimit, g.cfg.RateBurst)}
+	if claims.ExpiresAt != nil {
+		c.expires = claims.ExpiresAt.Time
+	}
+	c.recheck = time.Now().Add(g.jitter())
 	attached := false
 	defer func() {
 		// A partial handshake must not leave earlier bindings looking online.
@@ -262,6 +342,34 @@ func (g *Gateway) handshake(ctx context.Context, ws *websocket.Conn) (*conn, err
 	return c, nil
 }
 
+// jitter spreads re-checks, so connections opened together do not hit Redis
+// together.
+func (g *Gateway) jitter() time.Duration {
+	return g.cfg.RecheckEvery/2 + time.Duration(rand.Int64N(int64(g.cfg.RecheckEvery)))
+}
+
+// loginValid is the backstop for a missed login notification. A Redis failure
+// counts as valid: it must not disconnect everyone.
+func (g *Gateway) loginValid(ctx context.Context, c *conn) bool {
+	c.recheck = time.Now().Add(g.jitter())
+	if !c.expires.IsZero() && time.Now().After(c.expires) {
+		c.kick("session expired")
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	cur, err := g.cfg.Epochs.Current(ctx, c.uid)
+	if err != nil {
+		slog.Warn("login re-check", "uid", c.uid, "err", err)
+		return true
+	}
+	if cur != c.epoch {
+		c.kick("logged in elsewhere")
+		return false
+	}
+	return true
+}
+
 func (g *Gateway) readLoop(ctx context.Context, c *conn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -283,6 +391,9 @@ func (g *Gateway) readLoop(ctx context.Context, c *conn) {
 		}
 		if !c.limiter.Allow() {
 			c.shut("rate limited")
+			return
+		}
+		if time.Now().After(c.recheck) && !g.loginValid(ctx, c) {
 			return
 		}
 		env := &gamev1.Envelope{}
@@ -404,25 +515,58 @@ type tunnel struct {
 	dead  bool
 }
 
+// tunnelSlot serializes dialing one address, so that a dead node delays only
+// the connections that need it, and only once per DialBackoff.
+type tunnelSlot struct {
+	mu     sync.Mutex
+	t      *tunnel
+	failed time.Time
+}
+
 func (g *Gateway) tunnel(addr string) (*tunnel, error) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	if t, ok := g.tunnels[addr]; ok && !t.isDead() {
-		return t, nil
+	s := g.tunnels[addr]
+	if s == nil {
+		s = &tunnelSlot{}
+		g.tunnels[addr] = s
 	}
+	g.mu.Unlock()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.t != nil && !s.t.isDead() {
+		return s.t, nil
+	}
+	if time.Since(s.failed) < g.cfg.DialBackoff {
+		return nil, fmt.Errorf("node %s recently unreachable", addr)
+	}
+	t, err := g.dial(addr)
+	if err != nil {
+		s.failed = time.Now()
+		return nil, err
+	}
+	s.t = t
+	return t, nil
+}
+
+func (g *Gateway) dial(addr string) (*tunnel, error) {
 	cc, err := g.cfg.Dial(addr)
 	if err != nil {
 		return nil, err
 	}
+	// The stream outlives this call, so its context only gets a deadline here.
 	ctx, cancel := context.WithCancel(context.Background())
+	deadline := time.AfterFunc(g.cfg.DialTimeout, cancel)
 	stream, err := backendv1.NewGameBackendClient(cc).Tunnel(ctx)
+	if !deadline.Stop() && err == nil {
+		err = fmt.Errorf("dial %s timed out", addr)
+	}
 	if err != nil {
 		cancel()
 		_ = cc.Close()
 		return nil, err
 	}
 	t := &tunnel{addr: addr, stream: stream, cancel: cancel, conns: map[uint64]*conn{}}
-	g.tunnels[addr] = t
 	go func() {
 		t.recvLoop()
 		_ = cc.Close()
@@ -480,10 +624,7 @@ func (t *tunnel) recvLoop() {
 		case *backendv1.Downstream_Frame:
 			c.push(b.Frame)
 		case *backendv1.Downstream_CloseReason:
-			if f, err := kickFrame(b.CloseReason); err == nil {
-				c.push(f)
-			}
-			c.shut(b.CloseReason)
+			c.kick(b.CloseReason)
 		}
 	}
 }

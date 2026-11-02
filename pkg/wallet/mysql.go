@@ -80,7 +80,16 @@ func apply(ctx context.Context, db *sql.DB, c Change) (Receipt, error) {
 	}
 	next := cur + c.Delta
 	if cur < c.Require || next < 0 {
-		return Receipt{}, ErrInsufficient
+		// A racing copy of this request may be what spent the money. Report
+		// its result, not a failure of a change that was in fact applied.
+		if err := tx.Rollback(); err != nil {
+			return Receipt{}, fmt.Errorf("wallet: rollback: %w", err)
+		}
+		r, err := replay(ctx, db, c)
+		if errors.Is(err, sql.ErrNoRows) {
+			return Receipt{}, ErrInsufficient
+		}
+		return r, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE wallet_account SET balance = ? WHERE uid = ?`, next, c.UID); err != nil {

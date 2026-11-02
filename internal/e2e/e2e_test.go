@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 
 	gamev1 "github.com/yourname/gameserver/gen/game/v1"
@@ -56,9 +57,21 @@ func startHost(t *testing.T, cfg gamehost.Config) (string, *gamehost.Host) {
 
 func newStack(t *testing.T, nodes map[string][]string) *stack {
 	t.Helper()
+	return newStackWith(t, nodes, nil)
+}
+
+func newStackWith(t *testing.T, nodes map[string][]string, tune func(*gateway.Config)) *stack {
+	t.Helper()
 	s := &stack{signer: &auth.Signer{Key: []byte("0123456789abcdef0123456789abcdef"), TTL: time.Hour},
 		epochs: session.NewMemory()}
-	g := gateway.New(gateway.Config{Signer: s.signer, Epochs: s.epochs, Resolver: discovery.NewStatic(nodes)})
+	cfg := gateway.Config{Signer: s.signer, Epochs: s.epochs, Resolver: discovery.NewStatic(nodes)}
+	if tune != nil {
+		tune(&cfg)
+	}
+	g := gateway.New(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go g.Run(ctx)
 	mux := http.NewServeMux()
 	mux.Handle("GET /ws", g)
 	srv := httptest.NewServer(mux)
@@ -300,7 +313,7 @@ func TestOneConnectionReachesTwoServices(t *testing.T) {
 	if env := c.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP); env.GetChannel() != 0 {
 		t.Fatalf("room channel %d", env.GetChannel())
 	}
-	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1, Channel: 1},
+	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1, Channel: 1, RequestId: "m1"},
 		&gamev1.MarchReq{ToX: 3, ToY: 4, Troops: 100})
 	if env := c.until(gamev1.MsgId_MSG_ID_MARCH_RSP); env.GetChannel() != 1 {
 		t.Fatalf("world channel %d", env.GetChannel())
@@ -340,7 +353,7 @@ func TestMarchSurvivesWorldRestart(t *testing.T) {
 	s := newStack(t, map[string][]string{"world": {startBackend(t, w1.Factory, time.Minute)}})
 	c := s.dial(t, s.login(t, 1), &gamev1.Binding{Service: "world", Key: "k1"})
 	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
-	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1},
+	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1, RequestId: "m1"},
 		&gamev1.MarchReq{ToX: 5, ToY: 5, Troops: 1})
 	c.until(gamev1.MsgId_MSG_ID_MARCH_RSP)
 	if store.Len(slot) != 1 {
@@ -510,6 +523,197 @@ func TestReplacedSocketCannotDetachItsSuccessor(t *testing.T) {
 	time.Sleep(100 * time.Millisecond) // Let its detach reach the host.
 	action(fresh, 1, 1)
 	fresh.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+}
+
+func TestNewLoginClosesSocketsItDidNotReplace(t *testing.T) {
+	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}})
+	c := s.dial(t, s.login(t, 1), roomBinding(0))
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	s.login(t, 1) // No new socket, and so no attach, to replace this one.
+	c.until(gamev1.MsgId_MSG_ID_KICK)
+	closes(t, c)
+}
+
+// quiet is Epochs without notifications, as if every one had been missed.
+type quiet struct{ session.Epochs }
+
+func TestRecheckClosesSocketWhenNotificationWasMissed(t *testing.T) {
+	s := newStackWith(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}},
+		func(c *gateway.Config) {
+			c.Epochs = quiet{c.Epochs}
+			c.RecheckEvery = 20 * time.Millisecond
+		})
+	c := s.dial(t, s.login(t, 1), roomBinding(0))
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	s.login(t, 1)
+	time.Sleep(100 * time.Millisecond)
+	action(c, 1, 1) // The re-check runs as the socket is used.
+	c.until(gamev1.MsgId_MSG_ID_KICK)
+	closes(t, c)
+}
+
+func TestRecheckClosesSocketWhenTokenExpires(t *testing.T) {
+	s := newStackWith(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}},
+		func(c *gateway.Config) { c.RecheckEvery = 20 * time.Millisecond })
+	s.signer.TTL = 1200 * time.Millisecond
+	c := s.dial(t, s.login(t, 1), roomBinding(0))
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	time.Sleep(1500 * time.Millisecond)
+	action(c, 1, 1)
+	c.until(gamev1.MsgId_MSG_ID_KICK)
+	closes(t, c)
+}
+
+func TestNewLoginStartsANewDedupeCounter(t *testing.T) {
+	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, time.Minute)}})
+	a := s.dial(t, s.login(t, 1), roomBinding(0))
+	a.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	action(a, 7, 1)
+	a.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP)
+
+	b := s.dial(t, s.login(t, 1), roomBinding(0))
+	b.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	action(b, 1, 2) // Below A's counter, but this is another device.
+	if env := b.until(gamev1.MsgId_MSG_ID_ROOM_ACTION_RSP); value(t, env) != 3 {
+		t.Fatalf("value %d", value(t, env))
+	}
+}
+
+func TestOldPositionFromLostSeatGetsSnapshot(t *testing.T) {
+	s := newStack(t, map[string][]string{"room": {startBackend(t, room.Factory, 20*time.Millisecond)}})
+	tok := s.login(t, 1)
+	other := s.dial(t, s.login(t, 2), roomBinding(0)) // Keeps the scene alive.
+	other.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c := s.dial(t, tok, roomBinding(0))
+	last := c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT).GetSeq()
+	if err := c.ws.CloseNow(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond) // The seat expires.
+
+	c2 := s.dial(t, tok, roomBinding(last))
+	rsp := &gamev1.ResumeRsp{}
+	if err := proto.Unmarshal(c2.until(gamev1.MsgId_MSG_ID_RESUME_RSP).GetPayload(), rsp); err != nil {
+		t.Fatal(err)
+	}
+	if rsp.GetReplayed() {
+		t.Fatal("a position from a lost seat must not replay")
+	}
+	c2.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+}
+
+func TestMarchRetriedAfterSeatLossIsNotDoubled(t *testing.T) {
+	timers, store, ids := worldDeps(t)
+	w := slg.New(slg.Config{Store: store, Timers: timers, IDs: ids})
+	s := newStack(t, map[string][]string{"world": {startBackend(t, w.Factory, 20*time.Millisecond)}})
+	tok := s.login(t, 1)
+	bind := &gamev1.Binding{Service: "world", Key: "k1"}
+	march := func(c *client) uint64 {
+		c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1, RequestId: "m1"},
+			&gamev1.MarchReq{ToX: 1, Troops: 5})
+		rsp := &gamev1.MarchRsp{}
+		if err := proto.Unmarshal(c.until(gamev1.MsgId_MSG_ID_MARCH_RSP).GetPayload(), rsp); err != nil {
+			t.Fatal(err)
+		}
+		return rsp.GetMarchId()
+	}
+	c := s.dial(t, tok, bind)
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	first := march(c)
+	if err := c.ws.CloseNow(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond) // The seat, and its dedupe state, expire.
+
+	c2 := s.dial(t, tok, bind)
+	c2.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	if again := march(c2); again != first {
+		t.Fatalf("retry made march %d after %d", again, first)
+	}
+}
+
+func TestMarchWithoutRequestIDIsRejected(t *testing.T) {
+	timers, store, ids := worldDeps(t)
+	w := slg.New(slg.Config{Store: store, Timers: timers, IDs: ids})
+	s := newStack(t, map[string][]string{"world": {startBackend(t, w.Factory, time.Minute)}})
+	c := s.dial(t, s.login(t, 1), &gamev1.Binding{Service: "world", Key: "k1"})
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	c.send(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_MARCH_REQ), ClientSeq: 1},
+		&gamev1.MarchReq{ToX: 1, Troops: 5})
+	if env := c.read(); env.GetCode() != int32(gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST) {
+		t.Fatalf("reply %v", env)
+	}
+}
+
+func TestStuckGatewayLosesItsTunnel(t *testing.T) {
+	addr, _ := startHost(t, gamehost.Config{Factory: room.Factory, TunnelQueue: 8})
+	cc, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cc.Close() //nolint:errcheck // Best-effort.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	stream, err := backendv1.NewGameBackendClient(cc).Tunnel(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&backendv1.Upstream{Uid: 1, Key: "r", Conn: 1, Body: &backendv1.Upstream_Attach{
+		Attach: &backendv1.Attach{Epoch: 1, Key: "r"}}}); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := proto.Marshal(&gamev1.RoomActionReq{Delta: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This client never reads, so the host's queue must fill and it must end
+	// the stream. Send fails once it has.
+	for seq := uint64(1); ; seq++ {
+		frame, err := proto.Marshal(&gamev1.Envelope{MsgId: uint32(gamev1.MsgId_MSG_ID_ROOM_ACTION_REQ), ClientSeq: seq, Payload: payload})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stream.Send(&backendv1.Upstream{Uid: 1, Key: "r", Conn: 1, Body: &backendv1.Upstream_Frame{Frame: frame}}) != nil {
+			if ctx.Err() != nil {
+				t.Fatal("the host never closed a tunnel it could not send on")
+			}
+			return
+		}
+		if seq%256 == 0 {
+			time.Sleep(time.Millisecond) // Lets the scene keep up, so replies pile up.
+		}
+	}
+}
+
+func TestDeadNodeDoesNotStallOtherConnections(t *testing.T) {
+	// Accepts and then says nothing, so a gRPC dial hangs rather than fails.
+	black, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer black.Close() //nolint:errcheck // Best-effort.
+	go func() {
+		for {
+			if _, err := black.Accept(); err != nil {
+				return
+			}
+		}
+	}()
+	s := newStackWith(t, map[string][]string{
+		"room":  {startBackend(t, room.Factory, time.Minute)},
+		"world": {black.Addr().String()},
+	}, func(c *gateway.Config) { c.DialTimeout = 2 * time.Second })
+
+	stuck := s.dial(t, s.login(t, 1), &gamev1.Binding{Service: "world", Key: "k"})
+	defer stuck.ws.CloseNow() //nolint:errcheck // Best-effort.
+	time.Sleep(100 * time.Millisecond)
+
+	start := time.Now()
+	c := s.dial(t, s.login(t, 2), roomBinding(0))
+	c.until(gamev1.MsgId_MSG_ID_ROOM_SNAPSHOT)
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("a healthy connection waited %v behind a dead node", d)
+	}
 }
 
 func closes(t *testing.T, c *client) {

@@ -63,6 +63,27 @@ func TestMySQLConcurrentRetriesApplyOnce(t *testing.T) {
 	}
 }
 
+func TestMySQLRacingRetriesOfLastCoinAllSucceed(t *testing.T) {
+	ctx := context.Background()
+	w, _ := mysqlWallet(t)
+	uid := itest.ID()
+	if _, err := w.Apply(ctx, Change{UID: uid, RequestID: "seed", Delta: 10, Reason: "seed"}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for range 30 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c := Change{UID: uid, RequestID: "bet", Delta: -10, Require: 10, Reason: "bet"}
+			if r, err := w.Apply(ctx, c); err != nil || r.Balance != 0 {
+				t.Errorf("receipt %+v: %v", r, err)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func TestMySQLConcurrentBetsNeverOverdraw(t *testing.T) {
 	ctx := context.Background()
 	w, _ := mysqlWallet(t)

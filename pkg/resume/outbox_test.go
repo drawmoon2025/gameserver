@@ -48,6 +48,26 @@ func TestReplayClientAheadForcesSnapshot(t *testing.T) {
 	}
 }
 
+func TestReplayBeforeThisSessionForcesSnapshot(t *testing.T) {
+	s := NewAt(4, 1000)
+	pushN(s, 2)
+	if _, ok := s.Replay(998); ok {
+		t.Fatal("a position from an earlier session must not replay")
+	}
+	if frames, ok := s.Replay(999); !ok || len(frames) != 2 || string(frames[0]) != "1000" {
+		t.Fatalf("ok=%v frames=%q", ok, frames)
+	}
+}
+
+func TestResetDedupeAcceptsANewCounter(t *testing.T) {
+	s := New(4)
+	s.Commit(7, []byte("old"))
+	s.ResetDedupe()
+	if v, _ := s.CheckClientSeq(1); v != Process {
+		t.Fatal("a new login's first request must process")
+	}
+}
+
 func TestClientSeqDedupe(t *testing.T) {
 	s := New(4)
 	if v, _ := s.CheckClientSeq(1); v != Process {

@@ -54,7 +54,7 @@ and set those variables.
 |---|---|---|
 | `ROLE` | `all` | `all`, `account`, `gateway`, `slots`, `room` or `world` |
 | `JWT_KEY` | required | Signing key, 32+ bytes |
-| `NODE_ID` | `0` | Unique per process, 0-1023 |
+| `NODE_ID` | `0`, or leased from etcd | Unique per process, 0-1023 |
 | `MYSQL_DSNS` | memory | Comma-separated, one per physical shard |
 | `REDIS_ADDR` | memory | Comma-separated addresses |
 | `KAFKA_ENABLED` | `false` | Forward the outbox to Kafka |

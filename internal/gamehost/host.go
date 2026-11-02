@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -41,6 +42,8 @@ type Scene interface {
 	OnExpire(p *Player)
 	// OnMessage handles one client request.
 	OnMessage(p *Player, env *gamev1.Envelope) Reply
+	// OnRetire runs last, when the scene ends. Nothing runs after it.
+	OnRetire()
 	// Snapshot builds full state, sent when replay cannot cover a gap. On
 	// error the connection closes and the client retries: a client must never
 	// be given a partial snapshot as if it were the truth.
@@ -68,6 +71,7 @@ type Config struct {
 	Grace        time.Duration // How long a seat is held. Default 45s.
 	ReplayFrames int           // Default 256.
 	MailboxSize  int           // Default 4096.
+	TunnelQueue  int           // Frames buffered per gateway. Default 8192.
 	// Owns reports whether this node serves a key. Nil means every key.
 	Owns func(key string) bool
 }
@@ -90,6 +94,9 @@ func New(cfg Config) *Host {
 	if cfg.MailboxSize <= 0 {
 		cfg.MailboxSize = 4096
 	}
+	if cfg.TunnelQueue <= 0 {
+		cfg.TunnelQueue = 8192
+	}
 	return &Host{cfg: cfg, scenes: map[string]*sceneRun{}}
 }
 
@@ -98,14 +105,22 @@ type sceneRun struct {
 	actor   *actor.Actor
 	scene   Scene
 	players map[int64]*Player // Actor-only.
-	retired bool              // Actor-only. Work still queued must not reseat anyone.
 	host    *Host
+
+	// closing skips work still queued when a scene ends, so a backlog cannot
+	// delay handing a slot to its new owner.
+	closing atomic.Bool
 }
 
-// Scene returns the running scene for key, starting it if needed.
+// sceneFor returns the running scene for key, starting it if needed, or nil if
+// this node does not own it. Ownership is checked under the lock Evict takes:
+// either Evict sees this scene, or this sees that ownership has gone.
 func (h *Host) sceneFor(key string) *sceneRun {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.cfg.Owns != nil && !h.cfg.Owns(key) {
+		return nil
+	}
 	if s, ok := h.scenes[key]; ok {
 		return s
 	}
@@ -125,7 +140,8 @@ func (h *Host) existing(key string) *sceneRun {
 
 // retire ends a scene from its own actor, which cannot wait for itself.
 func (h *Host) retire(s *sceneRun) {
-	s.retired = true
+	s.closing.Store(true)
+	s.scene.OnRetire()
 	h.mu.Lock()
 	if h.scenes[s.key] == s {
 		delete(h.scenes, s.key)
@@ -160,11 +176,8 @@ func (h *Host) Evict(match func(key string) bool) {
 	h.mu.Unlock()
 	for _, s := range scenes {
 		s := s
+		s.closing.Store(true)
 		evict := func() {
-			if s.retired {
-				return
-			}
-			s.retired = true
 			for _, p := range s.players {
 				if p.tun != nil {
 					p.tun.send(moved(p.UID, p.conn))
@@ -173,6 +186,7 @@ func (h *Host) Evict(match func(key string) bool) {
 				}
 				s.scene.OnExpire(p)
 			}
+			s.scene.OnRetire()
 		}
 		err := s.actor.Tell(evict)
 		s.actor.Stop()
@@ -269,35 +283,44 @@ func (p *Player) resend(frame []byte) {
 func (h *Host) Tunnel(stream grpc.BidiStreamingServer[backendv1.Upstream, backendv1.Downstream]) error {
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
-	t := &tunnel{out: make(chan *backendv1.Downstream, 8192), cancel: cancel}
+	t := &tunnel{out: make(chan *backendv1.Downstream, h.cfg.TunnelQueue), cancel: cancel}
 	defer h.tunnelGone(t)
 
-	done := make(chan error, 1)
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
-				done <- ctx.Err()
 				return
 			case m := <-t.out:
 				if err := stream.Send(m); err != nil {
-					done <- err
 					cancel()
 					return
 				}
 			}
 		}
 	}()
+	recvDone := make(chan error, 1)
+	go func() {
+		for {
+			m, err := stream.Recv()
+			if err != nil {
+				recvDone <- err
+				return
+			}
+			h.dispatch(t, m)
+		}
+	}()
 
-	for {
-		m, err := stream.Recv()
+	// Recv does not watch ctx, and only returning ends the stream. This is what
+	// tells the gateway that a tunnel closed for backpressure is gone.
+	select {
+	case err := <-recvDone:
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
-		if err != nil {
-			return err
-		}
-		h.dispatch(t, m)
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -360,15 +383,13 @@ func (h *Host) tunnelGone(t *tunnel) {
 	for s, uids := range scenes {
 		s := s
 		uids := uids
-		if err := s.actor.Tell(func() {
+		s.actor.Post(func() {
 			for uid := range uids {
 				if p := s.players[uid]; p != nil && p.tun == t {
 					s.disconnect(p)
 				}
 			}
-		}); err != nil {
-			slog.Warn("tunnel cleanup dropped", "scene", s.key, "err", err)
-		}
+		})
 	}
 }
 
@@ -377,11 +398,11 @@ func (h *Host) dispatch(t *tunnel, m *backendv1.Upstream) {
 	var err error
 	switch b := m.GetBody().(type) {
 	case *backendv1.Upstream_Attach:
-		if h.cfg.Owns != nil && !h.cfg.Owns(m.GetKey()) {
+		s := h.sceneFor(m.GetKey())
+		if s == nil {
 			t.send(moved(uid, conn)) // The gateway's table is stale.
 			return
 		}
-		s := h.sceneFor(m.GetKey())
 		err = s.actor.Tell(func() { s.attach(t, uid, conn, b.Attach) })
 	case *backendv1.Upstream_Frame:
 		s := h.existing(m.GetKey())
@@ -395,7 +416,7 @@ func (h *Host) dispatch(t *tunnel, m *backendv1.Upstream) {
 		if s == nil {
 			return
 		}
-		err = s.actor.Tell(func() {
+		s.actor.Post(func() {
 			// A replaced socket may detach after its successor has attached.
 			if p := s.players[uid]; p != nil && p.tun == t && p.conn == conn {
 				s.disconnect(p)
@@ -409,7 +430,7 @@ func (h *Host) dispatch(t *tunnel, m *backendv1.Upstream) {
 }
 
 func (s *sceneRun) attach(t *tunnel, uid int64, conn uint64, a *backendv1.Attach) {
-	if s.retired {
+	if s.closing.Load() {
 		t.send(moved(uid, conn))
 		return
 	}
@@ -420,13 +441,23 @@ func (s *sceneRun) attach(t *tunnel, uid int64, conn uint64, a *backendv1.Attach
 		return
 	}
 	if !t.track(s, uid) {
-		return // The gateway went away while this was queued.
+		// The gateway went away while this was queued. No seat means no grace
+		// timer, so nothing else would end a scene this attach created.
+		if len(s.players) == 0 {
+			s.host.retire(s)
+		}
+		return
 	}
 	if !known {
-		p = &Player{UID: uid, sess: resume.New(s.host.cfg.ReplayFrames)}
+		// Seqs start from the clock so that they never repeat those of an
+		// earlier seat, whose last_seq the client may still present.
+		p = &Player{UID: uid, sess: resume.NewAt(s.host.cfg.ReplayFrames, uint64(time.Now().UnixMilli())*1000)}
 		s.players[uid] = p
 	}
 	wasOffline := !p.Online()
+	if known && p.epoch != a.GetEpoch() {
+		p.sess.ResetDedupe() // A new login is a new client with its own counter.
+	}
 	if p.tun != nil {
 		// A seat has one socket: the newest. It may be a newer login, or the
 		// same token reconnecting before the old socket was noticed as dead.
@@ -490,6 +521,9 @@ func (p *Player) direct(id gamev1.MsgId, msg proto.Message) {
 }
 
 func (s *sceneRun) frame(t *tunnel, uid int64, conn uint64, raw []byte) {
+	if s.closing.Load() {
+		return
+	}
 	p := s.players[uid]
 	if p == nil || p.tun != t || p.conn != conn {
 		return // Racing a kick or a tunnel change.

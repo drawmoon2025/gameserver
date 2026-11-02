@@ -18,6 +18,7 @@ import (
 	"path"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -58,6 +59,7 @@ type Node struct {
 
 	mu    sync.RWMutex
 	owned map[int]bool
+	lost  atomic.Bool // The lease ended: nothing here is owned any more.
 
 	draining map[int]time.Time // Run goroutine only.
 }
@@ -81,6 +83,9 @@ func New(cfg Config) *Node {
 
 // Owns reports whether this node currently serves key.
 func (n *Node) Owns(key string) bool {
+	if n.lost.Load() {
+		return false
+	}
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.owned[discovery.Slot(key)]
@@ -102,6 +107,16 @@ func (n *Node) Run(ctx context.Context) error {
 	}
 	defer sess.Close() //nolint:errcheck // Revokes the lease; expiry covers a failure.
 	lease := sess.Lease()
+	// Separate from the loop below, which may be busy tearing down a slot.
+	watchDone := make(chan struct{})
+	defer close(watchDone)
+	go func() {
+		select {
+		case <-sess.Done():
+			n.lost.Store(true)
+		case <-watchDone:
+		}
+	}()
 
 	pctx, cancel := context.WithTimeout(ctx, opTimeout)
 	_, err = n.cfg.Client.Put(pctx, nodesPrefix(n.cfg.Prefix, n.cfg.Service)+n.cfg.NodeID,
@@ -147,7 +162,7 @@ func (n *Node) reconcile(ctx context.Context, lease clientv3.LeaseID) error {
 	for slot := range discovery.Slots {
 		want, owner, mine := discovery.Pick(strconv.Itoa(slot), ids), owners[slot], n.holds(slot)
 		switch {
-		case mine && owner != me:
+		case mine && owner.id != me:
 			// The key is gone though the lease lives, so this copy is stale.
 			n.release(slot)
 		case mine && want == me:
@@ -156,7 +171,15 @@ func (n *Node) reconcile(ctx context.Context, lease clientv3.LeaseID) error {
 			if err := n.drain(ctx, slot); err != nil {
 				return err
 			}
-		case owner == "" && want == me:
+		case owner.id == me && owner.lease == lease:
+			// The key is ours but this node does not act on it: a claim's
+			// reply or a release's delete was lost. Nobody else can fix it.
+			if want == me {
+				n.adopt(slot)
+			} else if err := n.remove(ctx, slot); err != nil {
+				return err
+			}
+		case owner.id == "" && want == me:
 			if err := n.claim(ctx, slot, lease); err != nil {
 				return err
 			}
@@ -182,16 +205,19 @@ func (n *Node) claim(ctx context.Context, slot int, lease clientv3.LeaseID) erro
 	if err != nil {
 		return fmt.Errorf("cluster: claim slot %d: %w", slot, err)
 	}
-	if !r.Succeeded {
-		return nil
+	if r.Succeeded {
+		n.adopt(slot)
 	}
+	return nil
+}
+
+func (n *Node) adopt(slot int) {
 	n.mu.Lock()
 	n.owned[slot] = true
 	n.mu.Unlock()
 	if n.cfg.Acquired != nil {
 		n.cfg.Acquired(slot)
 	}
-	return nil
 }
 
 // drain gives up a slot another node should have, once doing so hurts nobody
@@ -207,6 +233,12 @@ func (n *Node) drain(ctx context.Context, slot int) error {
 		return nil
 	}
 	n.release(slot)
+	return n.remove(ctx, slot)
+}
+
+// remove deletes this node's key for a slot it has stopped serving. If this
+// fails, reconcile sees the key and tries again.
+func (n *Node) remove(ctx context.Context, slot int) error {
 	key := n.slotKey(slot)
 	dctx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
@@ -215,8 +247,6 @@ func (n *Node) drain(ctx context.Context, slot int) error {
 		Then(clientv3.OpDelete(key)).
 		Commit()
 	if err != nil {
-		// The next owner only waits longer: this node has stopped serving,
-		// and the key goes when the lease does.
 		return fmt.Errorf("cluster: release slot %d: %w", slot, err)
 	}
 	return nil
@@ -246,9 +276,15 @@ func (n *Node) releaseAll() {
 	}
 }
 
-// read returns live members (id to address) and slot owners (slot to id), both
-// from one etcd revision.
-func read(ctx context.Context, c *clientv3.Client, prefix, service string) (map[string]string, map[int]string, error) {
+// slotOwner is who holds a slot's key.
+type slotOwner struct {
+	id    string
+	lease clientv3.LeaseID
+}
+
+// read returns live members (id to address) and slot owners, both from one
+// etcd revision.
+func read(ctx context.Context, c *clientv3.Client, prefix, service string) (map[string]string, map[int]slotOwner, error) {
 	np, sp := nodesPrefix(prefix, service), slotsPrefix(prefix, service)
 	nodes, err := c.Get(ctx, np, clientv3.WithPrefix())
 	if err != nil {
@@ -262,15 +298,45 @@ func read(ctx context.Context, c *clientv3.Client, prefix, service string) (map[
 	for _, kv := range nodes.Kvs {
 		members[string(kv.Key)[len(np):]] = string(kv.Value)
 	}
-	owners := make(map[int]string, len(slots.Kvs))
+	owners := make(map[int]slotOwner, len(slots.Kvs))
 	for _, kv := range slots.Kvs {
 		slot, err := strconv.Atoi(string(kv.Key)[len(sp):])
 		if err != nil {
 			return nil, nil, fmt.Errorf("cluster: bad slot key %q", kv.Key)
 		}
-		owners[slot] = string(kv.Value)
+		owners[slot] = slotOwner{id: string(kv.Value), lease: clientv3.LeaseID(kv.Lease)}
 	}
 	return members, owners, nil
+}
+
+// ClaimNodeID leases an ID in [0, limit) that no other live process holds, for
+// ID generation. The ID is valid until the returned session ends.
+func ClaimNodeID(ctx context.Context, c *clientv3.Client, prefix string, limit int) (int64, *concurrency.Session, error) {
+	if prefix == "" {
+		prefix = "/gameserver"
+	}
+	sess, err := concurrency.NewSession(c, concurrency.WithTTL(10))
+	if err != nil {
+		return 0, nil, fmt.Errorf("cluster: session: %w", err)
+	}
+	for id := range limit {
+		key := path.Join(prefix, "nodeids", strconv.Itoa(id))
+		cctx, cancel := context.WithTimeout(ctx, opTimeout)
+		r, err := c.Txn(cctx).
+			If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).
+			Then(clientv3.OpPut(key, "", clientv3.WithLease(sess.Lease()))).
+			Commit()
+		cancel()
+		if err != nil {
+			sess.Close() //nolint:errcheck // Expiry covers a failure.
+			return 0, nil, fmt.Errorf("cluster: claim node id: %w", err)
+		}
+		if r.Succeeded {
+			return int64(id), sess, nil
+		}
+	}
+	sess.Close() //nolint:errcheck // Expiry covers a failure.
+	return 0, nil, fmt.Errorf("cluster: all %d node ids are in use", limit)
 }
 
 // Resolver is what gateways use to find a scene's node. It works from a table
@@ -311,8 +377,8 @@ func (r *Resolver) Refresh(ctx context.Context) error {
 			continue
 		}
 		table := make(map[int]string, len(owners))
-		for slot, id := range owners {
-			if addr, ok := members[id]; ok {
+		for slot, o := range owners {
+			if addr, ok := members[o.id]; ok {
 				table[slot] = addr
 			}
 		}

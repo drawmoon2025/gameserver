@@ -189,6 +189,70 @@ func TestBusySlotWaitsForIdleBeforeMoving(t *testing.T) {
 	eventually(t, "idle slots move", func() bool { return l.count("b") > 0 })
 }
 
+func TestLostRepliesDoNotOrphanSlots(t *testing.T) {
+	ctx := context.Background()
+	c, p := client(t), prefix(t)
+	lease, err := c.Grant(ctx, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every slot's key says "a", but a holds none: its claim replies were lost
+	// or its deletes failed.
+	np, sp := nodesPrefix(p, "room"), slotsPrefix(p, "room")
+	for _, id := range []string{"a", "b"} {
+		if _, err := c.Put(ctx, np+id, id+":1", clientv3.WithLease(lease.ID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for slot := range discovery.Slots {
+		if _, err := c.Put(ctx, fmt.Sprint(sp, slot), "a", clientv3.WithLease(lease.ID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := New(Config{Client: c, Prefix: p, Service: "room", NodeID: "a"})
+	if err := n.reconcile(ctx, lease.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, owners, err := read(ctx, c, p, "room")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for slot := range discovery.Slots {
+		want := discovery.Pick(fmt.Sprint(slot), []string{"a", "b"})
+		if want == "a" && !n.holds(slot) {
+			t.Fatalf("slot %d was not adopted", slot)
+		}
+		if want == "b" && owners[slot].id != "" {
+			t.Fatalf("slot %d is stuck on a, blocking b", slot)
+		}
+	}
+}
+
+func TestNodeIDsAreUniqueWhileHeld(t *testing.T) {
+	ctx := context.Background()
+	c, p := client(t), prefix(t)
+	a, sa, err := ClaimNodeID(ctx, c, p, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, sb, err := ClaimNodeID(ctx, c, p, 2)
+	if err != nil || a == b {
+		t.Fatalf("ids %d and %d: %v", a, b, err)
+	}
+	defer sb.Close() //nolint:errcheck // Best-effort.
+	if _, _, err := ClaimNodeID(ctx, c, p, 2); err == nil {
+		t.Fatal("a third claim must fail")
+	}
+	if err := sa.Close(); err != nil {
+		t.Fatal(err)
+	}
+	again, sc, err := ClaimNodeID(ctx, c, p, 2)
+	if err != nil || again != a {
+		t.Fatalf("released id not reusable: %d, %v", again, err)
+	}
+	defer sc.Close() //nolint:errcheck // Best-effort.
+}
+
 func TestMaxDrainForcesAMove(t *testing.T) {
 	c, p, l := client(t), prefix(t), newLedger()
 	start(t, c, p, "a", l, func(c *Config) {

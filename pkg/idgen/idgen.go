@@ -11,6 +11,9 @@ import (
 // epochMS is 2026-01-01 UTC. Never change it: IDs could then repeat.
 const epochMS int64 = 1767225600000
 
+// MaxNode is the largest node ID.
+const MaxNode = maxNode
+
 const (
 	maxNode  = 1<<10 - 1
 	maxSeq   = 1<<12 - 1

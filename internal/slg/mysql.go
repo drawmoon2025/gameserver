@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/go-sql-driver/mysql"
+
 	"github.com/yourname/gameserver/pkg/timer"
 )
 
@@ -16,16 +18,36 @@ type MySQLStore struct {
 }
 
 // Create implements Store.
-func (s *MySQLStore) Create(ctx context.Context, m March, arrive timer.Job) error {
+func (s *MySQLStore) Create(ctx context.Context, m March, arrive timer.Job) (March, error) {
+	err := s.create(ctx, m, arrive)
+	var dup *mysql.MySQLError
+	if !errors.As(err, &dup) || dup.Number != 1062 {
+		return m, err
+	}
+	first := March{UID: m.UID, RequestID: m.RequestID}
+	rerr := s.DB.QueryRowContext(ctx,
+		`SELECT id, kingdom, from_x, from_y, to_x, to_y, troops, arrive_at FROM slg_march
+		 WHERE uid = ? AND request_id = ?`, m.UID, m.RequestID).
+		Scan(&first.ID, &first.Kingdom, &first.FromX, &first.FromY, &first.ToX, &first.ToY, &first.Troops, &first.ArriveAt)
+	if errors.Is(rerr, sql.ErrNoRows) {
+		return March{}, err // The duplicate was something else, such as the timer.
+	}
+	if rerr != nil {
+		return March{}, rerr
+	}
+	return first, nil
+}
+
+func (s *MySQLStore) create(ctx context.Context, m March, arrive timer.Job) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // No-op after Commit.
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO slg_march (id, kingdom, uid, from_x, from_y, to_x, to_y, troops, arrive_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.Kingdom, m.UID, m.FromX, m.FromY, m.ToX, m.ToY, m.Troops, m.ArriveAt.UTC()); err != nil {
+		`INSERT INTO slg_march (id, kingdom, uid, request_id, from_x, from_y, to_x, to_y, troops, arrive_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.Kingdom, m.UID, m.RequestID, m.FromX, m.FromY, m.ToX, m.ToY, m.Troops, m.ArriveAt.UTC()); err != nil {
 		return err
 	}
 	if err := timer.AddTx(ctx, tx, arrive); err != nil {

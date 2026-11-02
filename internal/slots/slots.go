@@ -142,6 +142,13 @@ func (s *Service) Spin(ctx context.Context, uid int64, requestID string, bet int
 var errBadRequest = errors.New("slots: bad request")
 
 func (s *Service) handleSpin(w http.ResponseWriter, r *http.Request) {
+	// Read first. A client may stall its body for as long as the server allows,
+	// and the login must still be current when the bet is placed.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -164,9 +171,8 @@ func (s *Service) handleSpin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
-	env, req :=&gamev1.Envelope{}, &gamev1.SpinReq{}
-	if err != nil || proto.Unmarshal(body, env) != nil || proto.Unmarshal(env.GetPayload(), req) != nil {
+	env, req := &gamev1.Envelope{}, &gamev1.SpinReq{}
+	if proto.Unmarshal(body, env) != nil || proto.Unmarshal(env.GetPayload(), req) != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}

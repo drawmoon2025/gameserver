@@ -33,6 +33,9 @@ func (*Room) OnReconnect(*gamehost.Player) {}
 // OnExpire implements gamehost.Scene.
 func (*Room) OnExpire(*gamehost.Player) {}
 
+// OnRetire implements gamehost.Scene.
+func (*Room) OnRetire() {}
+
 // Snapshot implements gamehost.Scene.
 func (r *Room) Snapshot(*gamehost.Player) (gamev1.MsgId, proto.Message, error) {
 	s := &gamev1.RoomSnapshot{RoomId: r.key, Value: r.value}

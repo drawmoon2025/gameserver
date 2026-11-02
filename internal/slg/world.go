@@ -31,22 +31,25 @@ const KindMarchArrive = "march.arrive"
 
 // March is one army moving across the map.
 type March struct {
-	ID       uint64
-	Kingdom  string
-	UID      int64
-	FromX    int32
-	FromY    int32
-	ToX      int32
-	ToY      int32
-	Troops   int64
-	ArriveAt time.Time
+	ID        uint64
+	Kingdom   string
+	UID       int64
+	RequestID string // Unique per UID. It makes a retry find the first march.
+	FromX     int32
+	FromY     int32
+	ToX       int32
+	ToY       int32
+	Troops    int64
+	ArriveAt  time.Time
 }
 
 // Store persists marches.
 type Store interface {
 	// Create stores a march in the marching state together with the timer that
 	// ends it. They commit as one: a march without a timer would never arrive.
-	Create(ctx context.Context, m March, arrive timer.Job) error
+	// If (UID, RequestID) exists it stores nothing and returns that march, since
+	// client_seq dedupe does not outlive the seat but a march does.
+	Create(ctx context.Context, m March, arrive timer.Job) (March, error)
 	// Arrive moves a marching march to arrived. It returns false if it was
 	// already arrived, which is what makes a re-fired timer harmless.
 	Arrive(ctx context.Context, id uint64) (March, bool, error)
@@ -56,26 +59,31 @@ type Store interface {
 
 // MemoryStore is an in-process Store.
 type MemoryStore struct {
-	timers  timer.Store
-	mu      sync.Mutex
-	marches map[uint64]March
-	arrived map[uint64]bool
+	timers   timer.Store
+	mu       sync.Mutex
+	marches  map[uint64]March
+	arrived  map[uint64]bool
+	requests map[string]uint64
 }
 
 // NewMemoryStore creates an empty store that writes jobs to timers.
 func NewMemoryStore(timers timer.Store) *MemoryStore {
-	return &MemoryStore{timers: timers, marches: map[uint64]March{}, arrived: map[uint64]bool{}}
+	return &MemoryStore{timers: timers, marches: map[uint64]March{}, arrived: map[uint64]bool{}, requests: map[string]uint64{}}
 }
 
 // Create implements Store.
-func (s *MemoryStore) Create(ctx context.Context, m March, arrive timer.Job) error {
+func (s *MemoryStore) Create(ctx context.Context, m March, arrive timer.Job) (March, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.timers.Add(ctx, arrive); err != nil {
-		return err
+	key := fmt.Sprint(m.UID, ":", m.RequestID)
+	if id, ok := s.requests[key]; ok {
+		return s.marches[id], nil
 	}
-	s.marches[m.ID] = m
-	return nil
+	if err := s.timers.Add(ctx, arrive); err != nil {
+		return March{}, err
+	}
+	s.marches[m.ID], s.requests[key] = m, m.ID
+	return m, nil
 }
 
 // Arrive implements Store.
@@ -173,6 +181,8 @@ func (w *World) onArrive(ctx context.Context, j timer.Job) error {
 	return nil
 }
 
+const maxRequestID = 64 // The width of slg_march.request_id.
+
 // Kingdom is one world scene. It deliberately caches no troop counts: arrivals
 // commit with no scene loaded, so the store is the only complete record.
 type Kingdom struct {
@@ -201,6 +211,15 @@ func (*Kingdom) OnReconnect(*gamehost.Player) {}
 // OnExpire implements gamehost.Scene.
 func (*Kingdom) OnExpire(*gamehost.Player) {}
 
+// OnRetire implements gamehost.Scene.
+func (k *Kingdom) OnRetire() {
+	k.world.mu.Lock()
+	defer k.world.mu.Unlock()
+	if k.world.scenes[k.key] == k {
+		delete(k.world.scenes, k.key)
+	}
+}
+
 // Snapshot implements gamehost.Scene.
 func (k *Kingdom) Snapshot(p *gamehost.Player) (gamev1.MsgId, proto.Message, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -218,14 +237,15 @@ func (k *Kingdom) OnMessage(p *gamehost.Player, env *gamev1.Envelope) gamehost.R
 		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST}
 	}
 	req := &gamev1.MarchReq{}
-	if proto.Unmarshal(env.GetPayload(), req) != nil || req.GetTroops() <= 0 {
+	if proto.Unmarshal(env.GetPayload(), req) != nil || req.GetTroops() <= 0 ||
+		env.GetRequestId() == "" || len(env.GetRequestId()) > maxRequestID {
 		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_BAD_REQUEST}
 	}
 	// Distance would come from the city position; the origin stands in here.
 	w := k.world
 	tiles := abs(req.GetToX()) + abs(req.GetToY())
 	travel := time.Duration(float64(tiles) / w.cfg.Speed * float64(time.Second))
-	m := March{ID: uint64(w.cfg.IDs.Next()), Kingdom: k.key, UID: p.UID,
+	m := March{ID: uint64(w.cfg.IDs.Next()), Kingdom: k.key, UID: p.UID, RequestID: env.GetRequestId(),
 		ToX: req.GetToX(), ToY: req.GetToY(), Troops: req.GetTroops(),
 		ArriveAt: w.cfg.Now().Add(travel)}
 
@@ -235,7 +255,8 @@ func (k *Kingdom) OnMessage(p *gamehost.Player, env *gamev1.Envelope) gamehost.R
 	defer cancel()
 	job := timer.Job{ID: m.ID, Shard: discovery.Slot(k.key), Kind: KindMarchArrive,
 		Payload: binary.BigEndian.AppendUint64(nil, m.ID), FireAt: m.ArriveAt}
-	if err := w.cfg.Store.Create(ctx, m, job); err != nil {
+	m, err := w.cfg.Store.Create(ctx, m, job)
+	if err != nil {
 		slog.Error("create march", "err", err)
 		return gamehost.Reply{Code: gamev1.ErrorCode_ERROR_CODE_INTERNAL}
 	}

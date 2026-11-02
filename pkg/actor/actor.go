@@ -26,7 +26,11 @@ type Actor struct {
 	mailbox chan func()
 	stopCh  chan struct{}
 	doneCh  chan struct{}
-	once    sync.Once
+
+	// mu makes "not stopped" and the mailbox send one step for Tell, so nothing
+	// is accepted after the drain has finished.
+	mu      sync.RWMutex
+	stopped bool
 }
 
 // Spawn starts an actor. mailboxSize bounds queued work.
@@ -76,19 +80,30 @@ func (a *Actor) exec(fn func()) {
 
 // Tell enqueues fn without blocking.
 func (a *Actor) Tell(fn func()) error {
-	select {
-	case <-a.stopCh:
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.stopped {
 		return ErrStopped
-	default:
 	}
 	select {
 	case a.mailbox <- fn:
 		return nil
-	case <-a.stopCh:
-		return ErrStopped
 	default:
 		return ErrMailboxFull
 	}
+}
+
+// Post is Tell for work that must not be lost to a full mailbox, such as
+// cleanup. It never blocks the caller; it retries until accepted or stopped.
+func (a *Actor) Post(fn func()) {
+	if !errors.Is(a.Tell(fn), ErrMailboxFull) {
+		return
+	}
+	go func() {
+		for errors.Is(a.Tell(fn), ErrMailboxFull) {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
 }
 
 // Ask runs fn on the actor and waits for its result. Never call Ask from
@@ -126,15 +141,16 @@ func Ask[T any](ctx context.Context, a *Actor, fn func() (T, error)) (T, error) 
 // a turn countdown: it dies with the process. Anything that must survive a
 // restart (SLG marches, builds) belongs in pkg/timer.
 func (a *Actor) After(d time.Duration, fn func()) *time.Timer {
-	return time.AfterFunc(d, func() {
-		if err := a.Tell(fn); err != nil && !errors.Is(err, ErrStopped) {
-			slog.Warn("actor timer dropped", "actor", a.name, "err", err)
-		}
-	})
+	return time.AfterFunc(d, func() { a.Post(fn) })
 }
 
 // Stop rejects new work, drains accepted work and waits for the goroutine.
 func (a *Actor) Stop() {
-	a.once.Do(func() { close(a.stopCh) })
+	a.mu.Lock()
+	if !a.stopped {
+		a.stopped = true
+		close(a.stopCh)
+	}
+	a.mu.Unlock()
 	<-a.doneCh
 }

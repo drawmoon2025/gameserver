@@ -22,7 +22,8 @@ Optional: event_outbox -> Relay -> Kafka (KAFKA_ENABLED)
 2. **Anything that moves value has an idempotency key.** Slots use `request_id`; WS requests use `client_seq`; timers use the job ID.
 3. **Kafka is side-channel.** It is off by default and core flows do not read from it.
 4. **Actors do not share memory.** Cross-actor work uses Tell plus a reply Tell, never nested Ask.
-5. **Newer epoch wins.** It is checked at connect, on attach, and on every value-moving HTTP request.
+5. **Newer epoch wins.** It is checked at connect, on attach, and on every value-moving HTTP request. A login is announced to gateways, which close older sockets at once; each socket also re-checks every few minutes in case the announcement was missed, and closes when its token expires.
+6. **A durable effect needs a durable key.** `client_seq` lives in memory and dies with the seat. Anything that writes to a store must also carry a `request_id` with a unique key.
 
 ## Reconnect
 
@@ -32,6 +33,9 @@ The game node holds the replay ring, so a gateway crash loses nothing.
 2. The gateway checks the token and epoch, then attaches to the same node (same rendezvous hash).
 3. The host replies with `ResumeRsp`, then either replays the gap or sends a snapshot.
 4. `client_seq` dedupes retried requests.
+
+A new seat's `seq` starts from the clock, so an old `last_seq` can never match it and the
+client gets a snapshot. A new login resets `client_seq` dedupe, since it may be another device.
 
 A binding's position may change between connections, so `last_seq` belongs to the service
 and key, not to the channel number. Replayed frames are re-stamped with the current channel.
@@ -144,3 +148,10 @@ load tested.
 - Rate limits exist per connection only, not per IP or per account.
 - Gateway-to-backend gRPC is plaintext; use mTLS or a private network.
 - The slot math is sample data, not a certified model.
+- A Redis failover can lose a recent epoch. Tokens from the lost login then fail, and the
+  previous one works again until the next login. Avoiding this needs `WAIT` or a durable epoch.
+- A clock stepped back across a process restart can repeat IDs. Node IDs are unique among
+  live processes, but the high-water mark is not persisted.
+- Every `slots` instance relays the outbox. Delivery stays at-least-once, but with multiple
+  instances duplicates are routine and order is not preserved. Consumers must dedupe.
+- A socket that closes for token expiry must log in again; there is no token refresh.

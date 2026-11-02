@@ -28,6 +28,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 
 	backendv1 "github.com/yourname/gameserver/gen/backend/v1"
 	"github.com/yourname/gameserver/internal/account"
@@ -72,15 +73,7 @@ func build() (*deps, error) {
 	if len(key) < 32 {
 		return nil, errors.New("JWT_KEY must be at least 32 bytes")
 	}
-	node, err := strconv.ParseInt(env("NODE_ID", "0"), 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("NODE_ID: %w", err)
-	}
-	ids, err := idgen.New(node)
-	if err != nil {
-		return nil, err
-	}
-	d := &deps{signer: &auth.Signer{Key: []byte(key), TTL: 24 * time.Hour}, ids: ids}
+	d := &deps{signer: &auth.Signer{Key: []byte(key), TTL: 24 * time.Hour}}
 
 	if addr := os.Getenv("REDIS_ADDR"); addr != "" {
 		d.epochs = &session.Redis{Client: redis.NewUniversalClient(&redis.UniversalOptions{Addrs: strings.Split(addr, ",")})}
@@ -136,6 +129,31 @@ func build() (*deps, error) {
 	return d, nil
 }
 
+// nodeID returns NODE_ID, or leases a unique one from etcd. Two processes with
+// one ID would issue duplicate IDs, and a uid is one such ID.
+func (d *deps) nodeID(ctx context.Context, stop func()) (int64, error) {
+	if v := os.Getenv("NODE_ID"); v != "" || d.etcd == nil {
+		id, err := strconv.ParseInt(env("NODE_ID", "0"), 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("NODE_ID: %w", err)
+		}
+		return id, nil
+	}
+	id, sess, err := cluster.ClaimNodeID(ctx, d.etcd, "", idgen.MaxNode+1)
+	if err != nil {
+		return 0, err
+	}
+	go func() {
+		select {
+		case <-sess.Done():
+			slog.Error("node id lease lost")
+			stop() // Another process may now take this ID.
+		case <-ctx.Done():
+		}
+	}()
+	return id, nil
+}
+
 func publisher() events.Publisher {
 	if env("KAFKA_ENABLED", "false") == "true" {
 		return events.NewKafka(strings.Split(env("KAFKA_BROKERS", "localhost:9092"), ","))
@@ -144,7 +162,7 @@ func publisher() events.Publisher {
 }
 
 func serveHTTP(ctx context.Context, name, addr string, h http.Handler) {
-	srv := &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second}
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -216,7 +234,9 @@ func serveGame(ctx context.Context, name, addr string, f gamehost.Factory, owns 
 		return nil, err
 	}
 	host := gamehost.New(gamehost.Config{Factory: f, Owns: owns})
-	srv := grpc.NewServer()
+	// Must allow the gateways' keepalive pings.
+	srv := grpc.NewServer(grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+		MinTime: 10 * time.Second, PermitWithoutStream: true}))
 	backendv1.RegisterGameBackendServer(srv, host)
 	go func() {
 		<-ctx.Done()
@@ -239,6 +259,14 @@ func run() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	id, err := d.nodeID(ctx, stop)
+	if err != nil {
+		return err
+	}
+	if d.ids, err = idgen.New(id); err != nil {
+		return err
+	}
 
 	var wg sync.WaitGroup
 	role := env("ROLE", "all")
@@ -298,9 +326,14 @@ func run() error {
 		mux := http.NewServeMux()
 		mux.Handle("GET /ws", g)
 		serveHTTP(ctx, "gateway", env("GATEWAY_ADDR", ":8080"), mux)
+		go g.Run(ctx)
+		const drainWindow = 5 * time.Second
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			<-ctx.Done()
-			g.Drain(5 * time.Second)
+			g.Drain(drainWindow)
+			time.Sleep(drainWindow + time.Second) // Exiting early would drop the rest at once.
 		}()
 	}
 	<-ctx.Done()
